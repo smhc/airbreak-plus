@@ -124,7 +124,8 @@ class ASFirmware(object):
                 raise ValueError("Appears data in section you want me to patch! Bailing out...")
 
         if checkempty:
-            if self.fw[addr:(addr+patchlen)] != 0xFF*len(patchdata):
+            if self.fw[addr:(addr+patchlen)] != [0xFF]*len(patchdata):
+                #print(self.fw[addr:(addr+patchlen)])
                 raise ValueError("Appears data in section you want me to patch! Bailing out...")
 
         self.fw[addr:(addr+patchlen)] = patchdata
@@ -389,7 +390,33 @@ class ASFirmwarePatches(object):
         # this moving. Address needs to be +1 for normal code jump location.
         irq_location_packed = struct.pack("<I", 0x08000000 + irq_location + 1)
         self.asf.patch(irq_location_packed, 0x402dc, clobber=True)
+        
+    def patch_graph(self):
+        """Add special graph module"""
+        f = open("../graph.bin", "rb")
+        fw = f.read()
+        f.close()
+        
+        if self.asf.hash == self.known_units[0].hash:
+            #Place into empty space
+            self.asf.patch(fw, 0xfd000, checkempty=True)
+            
+            #Overwrite calling address
+            self.asf.patch(b'\x01\xd0\x0f\x08', 0xf9c88, clobber=True)
+        else:
+            raise IOError("Unknown hash: %s"%self.asf.hash)
 
+    def patch_breath(self):
+        """Add breath routine to allow full control"""
+        f = open("../breath.bin", "rb")
+        fw = f.read()
+        f.close()
+        
+        if self.asf.hash == self.known_units[0].hash:
+            self.asf.patch(fw, 0xBB734, clobber=True)
+        else:
+            raise IOError("Unknown hash: %s"%self.asf.hash)
+            
 def str2bool(v):
     if isinstance(v, bool):
        return v
@@ -408,17 +435,17 @@ if __name__ == "__main__":
     parser.add_argument('OPERATION', help="Operation to perform", choices=['INFO', 'PATCH'])
     
     patch_list_yn = [
-        {'arg':"patch-bypass-start",    'desc':"Bypass checks that block start-up.",                    'default':True,  'function':'bypass_startcheck'},
-        {'arg':"patch-unlock-uilimits", 'desc':"Unlock higher UI limits.",                              'default':True,  'function':'unlock_ui_limits'},
-        {'arg':"patch-extra-debug",     'desc':"Add extra debug to display.",                           'default':False, 'function':'extra_debug'},
-        {'arg':"patch-extra-modes",     'desc':"Add all modes.",                                        'default':True,  'function':'extra_modes'},
-        {'arg':"patch-extra-menu",      'desc':"Try enabling extra menu items.",                        'default':True,  'function':'extra_menu'},
-        {'arg':"patch-all-menu",        'desc':"All menu items will always be visible.",                'default':False, 'function':'all_menu'},
-        {'arg':"patch-gui-config",      'desc':"Enable all of the editable options in the settings menu.", 'default':True,'function':'gui_config'},
-        {'arg':"patch-logos",           'desc':"Change start-up logos.",                                'default':False,  'function':'patch_logos'},
-        {'arg':"patch-fw-serialmonitor",'desc':"Add monitor binary running on USART3 accessory port.",  'default':False, 'function':'patch_uart3_monitor'},
-        {'arg':"patch-fw-breath",       'desc':"Add breath binary to allow direct pressure control.",   'default':False, 'function':''},
-        {'arg':"patch-fw-graph",        'desc':"Add graph binary to allow graphing of pressures.",      'default':False, 'function':''},
+        {'arg':"patch-bypass-start",    'desc':"Bypass checks that block start-up.",                    'default':True,  'function':'bypass_startcheck', 'flags':0},
+        {'arg':"patch-unlock-uilimits", 'desc':"Unlock higher UI limits.",                              'default':True,  'function':'unlock_ui_limits',  'flags':(1<<1)},
+        {'arg':"patch-extra-debug",     'desc':"Add extra debug to display.",                           'default':True, 'function':'extra_debug',       'flags':(1<<2)},
+        {'arg':"patch-extra-modes",     'desc':"Add all modes.",                                        'default':True,  'function':'extra_modes',       'flags':(1<<3)},
+        {'arg':"patch-extra-menu",      'desc':"Try enabling extra menu items.",                        'default':True,  'function':'extra_menu',        'flags':(1<<4)},
+        {'arg':"patch-all-menu",        'desc':"All menu items will always be visible.",                'default':False, 'function':'all_menu',          'flags':(1<<5)},
+        {'arg':"patch-gui-config",      'desc':"Enable all of the editable options in the settings menu.", 'default':True,'function':'gui_config',       'flags':(1<<6)},
+        {'arg':"patch-logos",           'desc':"Change start-up logos.",                                'default':False,  'function':'patch_logos',      'flags':(1<<0)},
+        {'arg':"patch-fw-serialmonitor",'desc':"Add monitor binary running on USART3 accessory port.",  'default':False, 'function':'patch_uart3_monitor','flags':(1<<0)},
+        {'arg':"patch-fw-breath",       'desc':"Add breath binary to allow direct pressure control.",   'default':False, 'function':'patch_breath',      'flags':(1<<0)},
+        {'arg':"patch-fw-graph",        'desc':"Add graph binary to allow graphing of pressures.",      'default':False, 'function':'patch_graph',       'flags':(1<<0)},
     ]
     
     for arg in patch_list_yn:
@@ -444,10 +471,22 @@ if __name__ == "__main__":
         print("PATCH: Change text on main menu and airplane mode")
         patches.change_text()
         
+        flags = 0
+        
         for patch in patch_list_yn:
             if str2bool(getattr(args, patch['arg'].replace("-","_"))):
                 print("PATCH: " + patch['desc'])
                 getattr(patches, patch['function'])()
+                flags |= patch['flags']
+
+        #Put build flags in (as in original script), visible on main menu
+        if asf.hash == patches.known_units[0].hash:
+            print("PATCH: Adding str of FLAGS=0x%02x"%flags)
+            asf.patch(b'FLAGS=0x%02x'%flags, 0x17588, clobber=True)
+            
+            #Also add git commit hash (skipped for now)
+            #COMMIT_HASH=$(git log -n1 --format=format:"%H" | head -c 7)
+            #asf.patch(b'GIT=%s\x00'%COMMIT_HASH, 0x17764)
 
         asf.fix_crcs()
         asf.write_output(args.OUTFILE, args.overwrite)

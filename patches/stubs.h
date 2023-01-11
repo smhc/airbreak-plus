@@ -18,4 +18,8 @@ extern unsigned char * gui_context;
 
 extern unsigned tim_read_tim5(void);
 
+typedef unsigned size_t;
+
+extern void * malloc(size_t __size);
+
 #endif

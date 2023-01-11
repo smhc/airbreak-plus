@@ -16,11 +16,15 @@ int start(float target, float * base)
 {
 	// therapy manager variable dictionaries
 	float * const fvars	= (void*) 0x2000e948;
+	// *param_1 = DAT_000a0d30 + param_2 * 4 + 0x21c;
 	int * const ivars	= (void*) 0x2000e750;
+	// *param_1 = DAT_000a0d30 + param_2 * 4 + 0x24;
+	// DAT_000a0d30 = 0x2000E72C
 
 	// don't do anything if we are not in an active therapy mode
 	if (ivars[0x6f] == 0)
 		return 0;
+
 
 	// every time through update the max pressure difference
 	fvars[0x0d] = 30.0;
@@ -66,7 +70,7 @@ int start(float target, float * base)
 		high_pressure = state->high_pressure;
 	if (state->low_pressure != 0)
 		low_pressure = state->low_pressure;
-	
+
 	// check for time to change state
 	if (now - state->last_change > microseconds_per_breath)
 	{
@@ -74,14 +78,12 @@ int start(float target, float * base)
 		state->last_change = now;
 	}
 
-	// fvars[0x09] == target high
-	// fvars[0x0a] == target low
-	
+
 	if (state->state)
 		state->target = high_pressure;
 	else
 		state->target = low_pressure;
-		
+
 	// smoothly ramp to the new value
 	float smooth_target = (state->smoothing * fvars[0x2d] + state->target) / (state->smoothing + 1);
 

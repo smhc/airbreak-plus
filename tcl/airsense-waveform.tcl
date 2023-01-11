@@ -38,6 +38,6 @@ proc dump_float_table {offset numfloats numsamples delay {fname ""} args} {
 # without providing an fname, it will echo to console
 proc dump_therapy_values {numfloats numsamples delay {fname ""} } {
 	dump_float_table 0x2000e96c $numfloats $numsamples $delay $fname
-
+	# dump_float_table 0x2000e948 $numfloats $numsamples $delay $fname
 }
 

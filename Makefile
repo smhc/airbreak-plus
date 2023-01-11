@@ -1,14 +1,19 @@
-all: stm32-unlocked.bin
+all: stm32-unlocked.bin stm32-patched.bin
 
-stm32-unlocked.bin: breath.bin graph.bin
-	./patch-airsense ../cpap/stm32.bin $@
+stm32-unlocked.bin: patch-airsense
+	./patch-airsense stm32.bin $@
+
+stm32-patched.bin: patch-airsense patches/graph.bin patches/squarewave.bin
+	export PATCH_CODE=1 && ./patch-airsense stm32.bin $@
+
+binaries: patches/ventilator.bin patches/graph.bin patches/squarewave.bin
 
 serve:
 	mkdocs serve
 deploy:
 	mkdocs gh-deploy
 
-# The breath extension replaces the function at 0x80bb734 with
+# The ventilator extension replaces the function at 0x80bb734 with
 # a simple on/off timer for alternating between two pressures.
 # It can't be too long or it will overlap another function.
 #
@@ -17,20 +22,23 @@ deploy:
 # To add another extension at a different address in the firmware,
 # define a .elf target and a variable with the offset that it will
 # be patched into the image.
-breath.elf: breath.o stubs.o
-breath-offset := 0x80bb734
 
-#
+patches/ventilator.elf: patches/ventilator.o patches/stubs.o
+ventilator-offset := 0x80bb734
+
 # The graphing is too large to fit directly in the location at 0x8067d2c,
 # so it is in high in the flash and the function pointer is fixed up at 0x80f9c88
-graph.elf: graph.o stubs.o
+patches/graph.elf: patches/graph.o patches/stubs.o
 graph-offset := 0x80fd000
+
+patches/squarewave.elf: patches/squarewave.o patches/stubs.o
+squarewave-offset := 0x80fd300
 
 # If there is a new version of the ghidra XML, the stubs.S
 # file will be regenerated so that the addresses and functions
 # are at the correct address in the ELF image.
-stubs.S: stm32.bin.xml
-	./ghidra2stubs < $< > $@
+#stubs.S: stm32.bin.xml
+#	./ghidra2stubs < $< > $@
 
 
 CROSS ?= arm-none-eabi-
@@ -41,12 +49,16 @@ OBJCOPY := $(CROSS)objcopy
 
 CFLAGS ?= \
 	-g \
-	-O3 \
+	-Os \
 	-mcpu=cortex-m4 \
 	-mhard-float \
+	-mfp16-format=ieee \
 	-mthumb \
 	-W \
 	-Wall \
+	-Wno-unused-result \
+	-Wno-unused-variable \
+	-Wno-unused-parameter \
 	-nostdlib \
 	-nostdinc \
 
@@ -58,15 +70,15 @@ LDFLAGS ?= \
 	--Ttext $($*-offset) \
 	--entry start \
 
-%.o: %.c
+patches/%.o: patches/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
-%.o: %.S
+patches/%.o: patches/%.S
 	$(AS) $(ASFLAGS) -c -o $@ $<
-%.elf:
+patches/%.elf:
 	$(LD) $(LDFLAGS) -o $@ $^
 
-%.bin: %.elf
+patches/%.bin: patches/%.elf
 	$(OBJCOPY) -Obinary $< $@
 
 clean:
-	$(RM) *.o stubs.S
+	$(RM) patches/*.o patches/*.elf patches/*.bin stm32-unlocked.bin stm32-patched.bin

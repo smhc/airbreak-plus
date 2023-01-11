@@ -1,9 +1,11 @@
 #!/bin/bash
 
-die() { echo >&2 "$*" ; exit 1 ; }	
+die() { echo >&2 "$*" ; exit 1 ; }
 
 IN=$1
 OUT=$2
+
+DEBUG_PATCH=""
 
 if [ -z "$IN" -o -z "$OUT" ]; then
 		die "Usage: $0: stm32.bin stm32-unlocked.bin"
@@ -16,43 +18,82 @@ fi
 
 patch() {
 	offset=`printf "%d" $1`
-	printf "patching %08x\n" $1
+	if [ $DEBUG_PATCH ] ; then
+		printf "patching %08x\n" $1
+	fi
 	dd bs=1 seek=$offset conv=notrunc of="$OUT" status=none
 }
 
-echo "533b91127aa22e05b933db203ad56c449dc12a8c3fd62f57bd88c472a8061775  $IN"\
-| sha256sum --check \
-|| die "$IN: wrong hash"
+check_hash() {
+	HASH=$(sha256sum $IN | awk '{print $1}')
+	if [[ $HASH == "6790b548e0b37c57bc118772d4a04a599c0b74b16cd92e821071b9c7ba5ab711" ]] ; then
+		echo "$IN: VAuto 37051-SX567-0401 binary identified"
+	elif [[ $HASH == "533b91127aa22e05b933db203ad56c449dc12a8c3fd62f57bd88c472a8061775" ]] ; then
+		echo "$IN: AutoSet 37028-SX567-0401 binary identified"
+	else 
+	    die "$IN: Unidentified binary. Confirm its version is 0401 and that its binary has the same section layout"
+	fi
+}
 
 cp "$IN" "$OUT" || die "$OUT: copy failed"
 
-# also patch up the jump instruction that checks for tamper
-printf '\xc0\x46' | patch 0xf0 \
-|| die "startup patch failed" \
+patch_tamper() {
+	# patch the jump instruction that checks for tamper
+	printf '\xc0\x46' | patch 0xf0 \
+	|| die "startup patch failed"
+}
 
-# and add a message so that we know this is a modified firmware
-printf 'HACKED!' | patch 0x17500 || die failed
-printf 'NOT FOR USE\x0' | patch 0x1a540 || die failed
-printf 'WARNING! WARNING! Ventilator test firmware: Not for humans!\x00' | patch 0x1b860 || die failed
+patch_strings() {
+	# and add a message so that we know this is a modified firmware
+	printf 'HACKED!' | patch 0x17500 || die failed
+	printf 'My Options OwO\x00' | patch 0x17588 # Overwrites the French string, which will be broken. No biggie :P
+	#printf 'NOT FOR USE\x0' | patch 0x1a540 || die failed
+	#printf 'WARNING! WARNING! Ventilator test firmware: Not for humans!\x00' | patch 0x1b860 || die failed
+}
 
 BUILD_FLAGS=0
 
-patch_code() {
-	#if you want to add the extra breath mode
-	BUILD_FLAGS=$(( BUILD_FLAGS | (1 << 0) ))
-
-	if [ -r breath.bin ] ; then
-		echo "Including breath.bin"
-		cat breath.bin | patch 0xbb734 || die "binary patch failed"
+patch_direct() {
+	BIN_FILE=$1
+	ADDR=$2
+	if [ -r $BIN_FILE ] ; then
+		printf "Including $BIN_FILE..."
+		cat $BIN_FILE | patch $ADDR || die " patching failed"
+		echo " success!"
 	else
-		die "breath.bin not found, did you run make?"
-	fi 
-
-	if [ -r graph.bin ]; then
-		echo "Including graph.bin"
-		cat graph.bin | patch 0xfd000 || die "graph patch failed"
-		printf '\x01\xd0\x0f\x08' | patch 0xf9c88 || die "graph fixup failed"
+		die " file not found, did you run make?"
 	fi
+}
+
+# PTR_TARGET is +1 relative to ADDR, and byte order is reversed(little-endian)
+patch_pointer() {
+	BIN_FILE=$1
+	ADDR=$2
+	PTR_ADDR=$3
+	PTR_TARGET=$4
+	if [ -r $BIN_FILE ]; then
+		printf "Including $BIN_FILE..."
+		cat $BIN_FILE | patch $ADDR || die " patching failed"
+		printf "$PTR_TARGET" | patch $PTR_ADDR || die " pointer fixup failed"
+		echo " success!"
+	fi
+}
+patch_code_ventilator() {
+	patch_direct patches/ventilator.bin 0xbb734
+}
+
+patch_code_graph() {
+	patch_pointer patches/graph.bin 0xfd000 0xf9c88 '\x01\xd0\x0f\x08'
+}
+
+patch_code_squarewave() {
+	patch_pointer patches/squarewave.bin 0xfd300 0xf9778 '\x01\xd3\x0f\x08'
+}
+
+patch_code() {
+	BUILD_FLAGS=$(( BUILD_FLAGS | (1 << 0) ))
+	patch_code_squarewave
+	patch_code_graph
 }
 
 unlock_ui_limits() {
@@ -69,21 +110,38 @@ unlock_ui_limits() {
 extra_debug() {
 	BUILD_FLAGS=$(( BUILD_FLAGS | (1 << 2) ))
 	# set config variable 0xc value to 4 == enable more debugging data on display
-	# if you set it to \x0f it will enable four separate display pages of info in sleep report mode
+	# Default in VAuto is \x0e, all enabled is \x0f
+	# 1000 - ti min, ti max, ti, I:E, spont cyc (doesn't fit graph)
+	# 0100 - leak MV, RR, tv (default in this script)
+	# 0010 - bar thingy
+	# 0001 - fancy but useless round display
 	printf '\x04' | patch 0x84a8 || die failed
 }
 
 extra_modes() {
 	BUILD_FLAGS=$(( BUILD_FLAGS | (1 << 3) ))
-	# add more mode entries, set config 0x0 mask to all bits high
-	# default is 0x3, which only enables mode 1 (CPAP) and 2 (AutoSet)
 	# ---> This is the real magic <---
+	# add more mode entries, set config 0x0 mask to all bits high
+	# AutoSet default is 0x3, which only enables mode 1 (CPAP) and 2 (AutoSet)
+	# Autoset = 03 00, For Her = 03 08
+	# 1. 1 = CPAP
+	# 2. 2 = AutoSet
+	# 3. 4 = ???
+	# 4. 8 = S
+	# 5. 16 = ???
+	# 6. 32 = ???
+	# 7, 64 = VAuto
+	# 8, 128 = ASV
+	# 9, 256 = ASVAuto
+	# 49 00 = 0x01001001 = CPAP, VAuto, S
+	# 81 01 = 0x10000001 = CPAP, ASV, ASVAuto
+	# 2048 = AutoSet for her?
 	printf '\xff\xff' | patch 0x8590 || die failed
 }
 
+# Try enabling extra menu items
 extra_menu() {
 	BUILD_FLAGS=$(( BUILD_FLAGS | (1 << 4) ))
-	# try enabling extra menu items
 	printf '\x01\x20' | patch 0x66470
 }
 
@@ -115,18 +173,59 @@ gui_config () {
 	done
 }
 
-patch_code
-unlock_ui_limits
-extra_debug
-extra_modes
-extra_menu
-#all_menu
-gui_config
+custom_palette() {
+	BUILD_FLAGS=$(( BUILD_FLAGS | (1 << 7) ))
+	# Original color is '\x00\x99\xcc\x00'
+	printf '\xFF\xBB\x44\x00' | patch 0xf26f8 # UI Text
+	# printf '\x96\x32\x64\x00' | patch 0xf26fc # idk
+	# printf '\x55\x11\x33\x00' | patch 0xf2700 # UI Bright button
+	printf '\xC9\x00\x76\x00' | patch 0xf271c # UI Selected button
+	# printf '\x96\x32\x32\x00' | patch 0xf26fb # idk
+	# printf '\xDD\x00\x00\x00' | patch 0xf2720 # idk
 
-FLAGSTR=$(printf 'FLAGS=0x%02x' $BUILD_FLAGS)
-printf $FLAGSTR | patch 0x17588
+	# Maybe bright highlights
+  # printf '\x22\x00\x00\x00' | patch 0xf26fc # -> Button.Highlight.Bottom (not selected)
+  # printf '\x22\x00\x00\x00' | patch 0xf2704 # -> Button.Highlight.Top
 
-COMMIT_HASH=$(git log -n1 --format=format:"%H" | head -c 7)
-printf 'GIT=%s\x00' $COMMIT_HASH | patch 0x17764
+  # # Maybe dark buttons/headers
+  # printf '\x00\x00\x00\x00' | patch 0xf2708 # disabled setting text
+  # printf '\x22\x22\x22\x00' | patch 0xf270c # Dark button/Header color
+
+	# f2714
+	# f2720
+	# f2738
+	# f273c
+	# f2740
+	# f274c
+	
+}
+
+check_hash
+
+patch_tamper
+patch_strings
+
+if [[ $PATCH_CODE == 1 ]] ; then
+	echo "Patching code"
+	patch_code_graph
+	patch_code_squarewave
+fi
+
+# patch_code # 1
+unlock_ui_limits # 2
+extra_debug # 4
+extra_modes # 8
+extra_menu # 16
+# all_menu # 32
+gui_config # 64
+custom_palette #128
+
+# echo "Built with FLAGS=$BUILD_FLAGS"
+#FLAGSTR=$(printf 'FLAGS=0x%02x' $BUILD_FLAGS)
+#printf $FLAGSTR | patch 0x17588
+
+#COMMIT_HASH=$(git log -n1 --format=format:"%H" | head -c 7)
+#printf 'GIT=%s\x00' $COMMIT_HASH | patch 0x17764
+
 
 sha256sum $OUT

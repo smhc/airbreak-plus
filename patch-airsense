@@ -175,29 +175,36 @@ gui_config () {
 
 custom_palette() {
 	BUILD_FLAGS=$(( BUILD_FLAGS | (1 << 7) ))
-	# Original color is '\x00\x99\xcc\x00'
-	printf '\xFF\xBB\x44\x00' | patch 0xf26f8 # UI Text
-	# printf '\x96\x32\x64\x00' | patch 0xf26fc # idk
-	# printf '\x55\x11\x33\x00' | patch 0xf2700 # UI Bright button
-	printf '\xC9\x00\x76\x00' | patch 0xf271c # UI Selected button
-	# printf '\x96\x32\x32\x00' | patch 0xf26fb # idk
-	# printf '\xDD\x00\x00\x00' | patch 0xf2720 # idk
 
-	# Maybe bright highlights
-  # printf '\x22\x00\x00\x00' | patch 0xf26fc # -> Button.Highlight.Bottom (not selected)
-  # printf '\x22\x00\x00\x00' | patch 0xf2704 # -> Button.Highlight.Top
+	# Selected item color
+	printf '\xCC\x33\x00\x00' | patch 0xf271c
 
-  # # Maybe dark buttons/headers
-  # printf '\x00\x00\x00\x00' | patch 0xf2708 # disabled setting text
-  # printf '\x22\x22\x22\x00' | patch 0xf270c # Dark button/Header color
+	# Whites
+	for addr in \
+		0xf26f8 0xf2714 0xf2720 0xf2738 0xf273c 0xf2740 0xf274c 0xf2768 0xf2774 0xf278c 0xf2790 0xf2794 \
+	; do
+		printf '\xFF\xBB\x44\x00' | patch $addr 
+	done 
 
-	# f2714
-	# f2720
-	# f2738
-	# f273c
-	# f2740
-	# f274c
-	
+	# Bright grays (highlights mostly)
+	for addr in	0xf26fc 0xf2704 0xf2750 0xf2758 0xf276c ; do
+		printf '\x96\x48\x48\x00' | patch $addr 
+	done
+
+	# Mid grays (buttons)
+	for addr in 0xf2700 0xf2754 ; do
+		printf '\x64\x32\x32\x00' | patch $addr 
+	done
+
+	# Low grays (disabled, backgrounds)
+	for addr in 0xf2708 0xf270c 0xf2728 0xf2744 0xf275c 0xf2760 0xf277c 0xf2798 ; do
+		printf '\x40\x20\x20\x00' | patch $addr 
+	done
+
+	# Blacks
+	for addr in 0xf2710 0xf272c 0xf2748 0xf2764 0xf2780 0xf279c ; do
+		printf '\x08\x00\x08\x00' | patch $addr 
+	done
 }
 
 check_hash

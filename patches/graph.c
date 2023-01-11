@@ -3,6 +3,9 @@
  */
 #include "stubs.h"
 
+#define DRAW_PRESSURE 1
+#define DRAW_FLOW 0
+
 // Replaces `gui_fill_rect_set_colors`
 int start(void) {
 	// therapy manager variable dictionaries
@@ -53,21 +56,40 @@ int start(void) {
 	GUI_SetColor(0x000000); // Black BGR
 	LCD_FillRect(pos_x, top, pos_x + 8, bottom);
 
-	// draw 0, 5, 10, 15, 20 very faintly
-	GUI_SetColor(0x202020);
-	LCD_DrawPixel(pos_x, bottom);
-	LCD_DrawPixel(pos_x, bottom - 5 * vscale);
-	LCD_DrawPixel(pos_x, bottom - 10 * vscale);
-	LCD_DrawPixel(pos_x, bottom - 15 * vscale);
-	LCD_DrawPixel(pos_x, bottom - 20 * vscale);
+	#if DRAW_PRESSURE == 1
+		// If we're in S mode, draw its target EPAP and IPAP range
+		if (ivars[0x6f] == 4) {
+			GUI_SetColor(0x101010);
+			LCD_FillRect(pos_x, bottom - fvars[0xe] * vscale, pos_x + 8, bottom - fvars[0xf] * vscale);
+			// LCD_DrawPixel(pos_x, bottom - fvars[0xf] * vscale);
+			// LCD_DrawPixel(pos_x, bottom - fvars[0xe] * vscale);
+		}
 
-	// draw the current commanded pressure faintly
-	GUI_SetColor(0x0000F0);
-	LCD_DrawPixel(pos_x, bottom - command);
+		// draw 0, 5, 10, 15, 20 very faintly
+		GUI_SetColor(0x202020);
+		LCD_DrawPixel(pos_x, bottom);
+		LCD_DrawPixel(pos_x, bottom - 5 * vscale);
+		LCD_DrawPixel(pos_x, bottom - 10 * vscale);
+		LCD_DrawPixel(pos_x, bottom - 15 * vscale);
+		LCD_DrawPixel(pos_x, bottom - 20 * vscale);
 
-	// draw the current actual pressure in bright green
-	GUI_SetColor(0x00FF00);
-	LCD_DrawPixel(pos_x, bottom - pressure);
+
+		// draw the current commanded pressure faintly
+		GUI_SetColor(0x0000F0);
+		LCD_DrawPixel(pos_x, bottom - command);
+
+		// draw the current actual pressure in bright green
+		GUI_SetColor(0x00FF00);
+		LCD_DrawPixel(pos_x, bottom - pressure);
+	#endif
+
+	#if DRAW_FLOW == 1
+		GUI_SetColor(0x202020);
+		LCD_DrawPixel(pos_x, top + height/2);
+		// Draw the two flow variables
+		GUI_SetColor(0x00FF00);
+		LCD_DrawPixel(pos_x, top + height/2 - fvars[0x25] / 2);
+	#endif
 
 	// restore the old clipping rectangle
 	clip[0] = old_x0;

@@ -90,6 +90,10 @@ patch_code_squarewave() {
 	patch_pointer patches/squarewave.bin 0xfd300 0xf9778 '\x01\xd3\x0f\x08'
 }
 
+patch_code_squarewave_asv() {
+	patch_pointer patches/squarewave_asv.bin 0xfd300 0xf9778 '\x01\xd3\x0f\x08'
+}
+
 patch_code() {
 	BUILD_FLAGS=$(( BUILD_FLAGS | (1 << 0) ))
 	patch_code_squarewave
@@ -215,7 +219,11 @@ patch_strings
 if [[ $PATCH_CODE == 1 ]] ; then
 	echo "Patching code"
 	patch_code_graph
-	patch_code_squarewave
+	if [[ $PATCH_TESTING == 1 ]] ; then
+		patch_code_squarewave_asv
+	else
+		patch_code_squarewave
+	fi
 fi
 
 # patch_code # 1

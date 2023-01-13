@@ -1,4 +1,4 @@
-all: stm32-unlocked.bin stm32-patched.bin
+all: stm32-unlocked.bin stm32-patched.bin stm32-testing.bin
 
 stm32-unlocked.bin: patch-airsense
 	./patch-airsense stm32.bin $@
@@ -6,7 +6,10 @@ stm32-unlocked.bin: patch-airsense
 stm32-patched.bin: patch-airsense patches/graph.bin patches/squarewave.bin
 	export PATCH_CODE=1 && ./patch-airsense stm32.bin $@
 
-binaries: patches/ventilator.bin patches/graph.bin patches/squarewave.bin
+stm32-testing.bin: patch-airsense patches/graph.bin patches/squarewave_asv.bin
+	export PATCH_CODE=1 && export PATCH_TESTING=1 && ./patch-airsense stm32.bin $@
+
+binaries: patches/ventilator.bin patches/graph.bin patches/squarewave.bin patches/squarewave_asv.bin
 
 serve:
 	mkdocs serve
@@ -33,6 +36,9 @@ graph-offset := 0x80fd000
 
 patches/squarewave.elf: patches/squarewave.o patches/stubs.o
 squarewave-offset := 0x80fd300
+
+patches/squarewave_asv.elf: patches/squarewave_asv.o patches/stubs.o
+squarewave_asv-offset := 0x80fd300
 
 # If there is a new version of the ghidra XML, the stubs.S
 # file will be regenerated so that the addresses and functions

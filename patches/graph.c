@@ -5,6 +5,7 @@
 
 #define DRAW_PRESSURE 1
 #define DRAW_FLOW 0
+#define DRAW_TEST 1
 
 // Replaces `gui_fill_rect_set_colors`
 int start(void) {
@@ -56,6 +57,7 @@ int start(void) {
 	GUI_SetColor(0x000000); // Black BGR
 	LCD_FillRect(pos_x, top, pos_x + 8, bottom);
 
+
 	#if DRAW_PRESSURE == 1
 		// If we're in S mode, draw its target EPAP and IPAP range
 		if (ivars[0x6f] == 4) {
@@ -86,7 +88,7 @@ int start(void) {
 	#if DRAW_FLOW == 1
 		GUI_SetColor(0x202020);
 		LCD_DrawPixel(pos_x, top + height/2);
-		// Draw the two flow variables
+		// Draw the leak-compensated flow variable
 		GUI_SetColor(0x00FF00);
 		LCD_DrawPixel(pos_x, top + height/2 - fvars[0x25] / 2);
 	#endif

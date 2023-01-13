@@ -10,8 +10,6 @@
 // 3: late exhale (flow returning) - ps->0 (based on max exhflow->0 curve)
 // 4: exhalatory pause - ps==0
 
-#define STRUCT_TEST 1
-#define HALFP_TEST 0
 #define ASV_TEST 0
 #define CONSTANT_DELTA 0
 
@@ -60,39 +58,43 @@ static inline float cinterp(float from, float to, float speed) {
   }
 }
 
+const char ASV_ADJUST_EVERY = 5; // 4 ticks (40ms) 
+
 typedef struct {
   float last_progress;
-  #if HALFP_TEST == 1
-    __fp16 volume;
-    __fp16 peak_volume;
-  #else
-    float volume;
-    float peak_volume;
-  #endif
+  float volume;
+  float peak_volume;
   unsigned last_time;
+
   #if ASV_TEST == 1
-    // float 
+    unsigned ticks; // Starts at 0, +1 each call
+    float target_volume[20];
+    float current_volume
   #endif
 } my_data_t;
 
+// Awful hacky code for storing arbitrary data
 typedef struct {
   unsigned magic;
-  my_data_t * data_ptr;
+  my_data_t * data;
 } magic_ptr_t;
-
 static magic_ptr_t * const magic_ptr = (void*) (0x2000e948 + 0x11*4);
-
 const unsigned MAGIC = 0x07E49001;
+
 static inline my_data_t * get_data() {
+  unsigned now = tim_read_tim5();
   if (magic_ptr->magic != MAGIC) {
-    magic_ptr->magic = MAGIC;
-    magic_ptr->data_ptr = malloc(sizeof(my_data_t));
-    magic_ptr->data_ptr->volume = 0.0f;
-    magic_ptr->data_ptr->peak_volume = 0.0f;
-    magic_ptr->data_ptr->last_progress = 0.0f;
-    magic_ptr->data_ptr->last_time = tim_read_tim5();
+    magic_ptr->data = malloc(sizeof(my_data_t));
   }
-  return magic_ptr->data_ptr;
+  // Initialize if it's the first time or more than 0.5s elapsed, suggesting the therapy is re-started.
+  if ((magic_ptr->magic != MAGIC) || (now - magic_ptr->data->last_time) > 500000) {
+    magic_ptr->data->volume = 0.0f;
+    magic_ptr->data->peak_volume = 0.0f;
+    magic_ptr->data->last_progress = 0.0f;
+    magic_ptr->data->last_time = now;
+  }
+  magic_ptr->magic = MAGIC;
+  return magic_ptr->data;
 }
 
 
@@ -157,89 +159,62 @@ void asv_operation(float delta) {
 //    Late ramp: Compensate hypopnea
 //    Stable: Slower compensate hypopnea
 
-// float target_volumes[40]
-
-// TODO: Start using deltatime
-
-
-// void motor_command_shutdown(int param_1) { fvars[0x2d] = 0.0f; }
-// void motor_command_write__0x7ffffd4(void) { fvars[0x2d] = *cmd_ipap - *cmd_ps; }
 
 const float RISE_TIME=0.2f;  // 1.6 * 0.4 = ~0.65s ramp
 const float PS_INTERP=0.07f; // 0.1f is ~0.25s and sharp but comfy, 0.05f feels a bit slow
 const float ASV_TARGET_INTERP=0.025; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
 
-void start(int param_1) {
-  float * const fvars = (void*) 0x2000e948;
-  int * const ivars = (void*) 0x2000e750;
+static float * const fvars = (void*) 0x2000e948;
+static int * const ivars = (void*) 0x2000e750;
 
+void start(int param_1) {
   const float progress = fvars[0x20]; // 1.6s to 0.5, 4.5s to 1.0 
   const float s_ipap = fvars[0xe];
   const float s_epap = fvars[0xf];
-
 
   const float epap = s_epap;
   const float ips = s_ipap - s_epap;
   const float eps = 1.5f;
 
-  char ramping = (fvars[0x2a] >= s_epap); // Might or might not work
-
   float *cmd_ps = &fvars[0x29];
   float *cmd_epap = &fvars[0x28];
   float *cmd_ipap = &fvars[0x2a]; // This is probably set to epap+ps elsewhere, and likely does nothing here
+  
+  char ramping = (fvars[0x2a] >= s_epap); // Might or might not work
 
-  // float *v_peak_exhale = &fvars[0x11];
-  // float *v_ps = &fvars[0x10];
-  my_data_t * data = get_data();
-  #if HALFP_TEST == 1
-    __fp16 *v_peak_volume = &data->peak_volume;
-    __fp16 *v_volume = &data->volume;
-  #else
-    float *v_peak_volume = &data->peak_volume;
-    float *v_volume = &data->volume;
-  #endif
-  unsigned *last = &data->last_time;
-  float *v_last_progress = &data->last_progress;
+  my_data_t * d = get_data();
 
   // Calculate deltatime in seconds
   #if CONSTANT_DELTA == 1
     float delta = 0.010f; // It's 10ms +- 0.010ms, basically constant
   #else
     unsigned now = tim_read_tim5();
-    float delta = (now - *last) / 1000000.0f; // In seconds
+    float delta = (now - d->last_time) / 1000000.0f; // In seconds
     delta = clamp(delta, 0.0f, 0.05f); // Clamp it in case *last is uninitialized (disgusting hack tbh)
-    *last = now;
+    d->last_time = now;
   #endif
-
-  fvars[0x16] = delta; // Write delta so I can graph it
 
   const float flow = fvars[0x25] * delta; // Leak-compensated patient flow
 
-  if (*v_last_progress > progress + 0.25f) {
-    // *v_dont_support = (*v_volume / *v_peak_volume) > 0.15f; // If there's too much residual volume, do not support this "breath"
-    *v_volume = 0.0f; // We just started a new breath, set volume to 0
-    *v_peak_volume = 0.0f;
-    // *cmd_ps = 0.0f;
+  if (d->last_progress > progress + 0.25f) {
+    // TODO: d->dont_support = (*v_volume / *v_peak_volume) > 0.15f; // Also do TE-based calculation
+    d->volume = 0.0f; // We just started a new breath, set volume to 0
+    d->peak_volume = 0.0f;
   } else {
-    *v_volume += flow;
+    d->volume += flow;
   }
-  *v_peak_volume = maxf(*v_peak_volume, *v_volume);
+  d->peak_volume = maxf(d->peak_volume, d->volume);
 
   *cmd_epap = epap;
   if (progress <= 0.5f) { // Inhale
     *cmd_ps = minf(ips, *cmd_ps + ips * delta / 0.65f );
 
-    // *cmd_ps = interpmin(*cmd_ps, ips, 0.03f, 0.01f); // Gradual interp. Too fast early, too slow late :-/
-    // if (progress <= RISE_TIME) {
-    //   *cmd_ps = progress * (ips / RISE_TIME);
-    // } else { *cmd_ps = ips; }
   } else { // Exhale
-    // EPS from 80% volume to 15% volume 
-    float volumebased_mult = map01c(*v_volume, *v_peak_volume * 0.15f, *v_peak_volume * 0.80f); // At >80% residual volume == 1, below 15% == 0
+    float volumebased_mult = map01c(d->volume, d->peak_volume * 0.15f, d->peak_volume * 0.80f); // At >80% residual volume == 1, below 15% == 0
     // 0.075, 0.02 is ~300ms downslope. Marginally punchy
     *cmd_ps = interpmin(*cmd_ps, -eps * volumebased_mult, 0.06f, 0.02f); // Convert to use dt: delta * 1cmH2O/s minimum
   }
-  *v_last_progress = progress;
+  d->last_progress = progress;
 
   *cmd_ps = clamp(*cmd_ps, -eps, +ips); // Just in case
   if (*cmd_epap < 0.0f) { *cmd_epap = 0.0f; }

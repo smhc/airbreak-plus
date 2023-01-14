@@ -63,10 +63,10 @@ CFLAGS ?= \
 	-W \
 	-Wall \
 	-Wno-unused-result \
-	-Wno-unused-variable \
 	-Wno-unused-parameter \
 	-nostdlib \
 	-nostdinc \
+	-ffreestanding \
 
 ASFLAGS ?= $(CFLAGS)
 

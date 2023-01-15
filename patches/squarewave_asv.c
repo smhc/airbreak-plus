@@ -1,14 +1,6 @@
 #include "stubs.h"
 
-// 0: early inhale (pressure up slope) ps->ips
-//   -   0% of slope: Set IPS to max(ips, asv_ips)
-//   -  50% of slope: Check volume1, adjust ips target (down if hyperpnea, up if >10% drop)
-//   - 100% of slope: Check volume2, adjust ips target (up if >10% drop)
-// 1: late inhale (pressure constant) ps==ips
-// 2: early exhale (flow still dropping) - ps->eps
-//   - end: Record peak eflow
-// 3: late exhale (flow returning) - ps->0 (based on max exhflow->0 curve)
-// 4: exhalatory pause - ps==0
+#define COUNT_PRETRIGGER_FLOW 1 // Include pre-breath-start positive flow values into cumulative volume of current breath
 
 static inline float maxf(float a, float b) {
   if (a >= b) { return a; }
@@ -33,7 +25,6 @@ static inline float map01c(float s, float start, float end) {
    return clamp( map01(s, start, end), 0.0f, 1.0f );
 }
 
-
 static inline float interp(float from, float to, float coeff) {
    return from + (to - from) * coeff;
 }
@@ -55,15 +46,11 @@ static inline float cinterp(float from, float to, float speed) {
   }
 }
 
-
 const int ASV_ADJUST_EVERY = 5; // 5 ticks (50ms) 
 const float ASV_INTERP = 0.025; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
 const int ASV_GRACE_PERIOD = 2; // Amount of ticks before first running ASV
-const int ASV_STEPS = 20; // 20*5=1000ms window of adjustment
+#define ASV_STEPS 20 // 20*5=1000ms window of adjustment
 const float ASV_MAX_IPS = 2.0f;
-// const char S_INHALE = 0;
-// const char S_EXHALE = 1;
-// const char S_PAUSE = 2;
 
 static inline void asv_interp(float *value, float towards) {
   *value = interp(*value, towards, ASV_INTERP);
@@ -80,13 +67,14 @@ typedef struct {
   float duration;
   unsigned breath_count;
   int ticks; // Starts at 0, +1 each call
-
   // float ti; float te;
   // float recent_ti; recent_te;
 
   float recent_volume[ASV_STEPS];
   float current_volume[ASV_STEPS];
-  float last_flow[8];
+  #if COUNT_PRETRIGGER_FLOW == 1
+    float last_flow[10]; // 10t=100ms 
+  #endif
   float recent_ips;
   float current_ips;
   int dont_support;
@@ -105,7 +93,7 @@ static inline my_data_t * get_data() {
   if (magic_ptr->magic != MAGIC) {
     magic_ptr->data = malloc(sizeof(my_data_t));
   }
-  // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was re-started.
+  // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.
   if ((magic_ptr->magic != MAGIC) || (now - magic_ptr->data->last_time) > 100000) {
     magic_ptr->data->last_progress = 0.0f;
     magic_ptr->data->volume = 0.0f;
@@ -116,9 +104,9 @@ static inline my_data_t * get_data() {
     magic_ptr->data->breath_count = 0;
     magic_ptr->data->ticks = -1; // Uninitialized
     magic_ptr->data->dont_support = 0;
-    for(int i=0; i<8; i++) {
-      last_flow[i] = 0.0f;
-    }
+    #if COUNT_PRETRIGGER_FLOW == 1
+      for(int i=0; i<10; i++) { magic_ptr->data->last_flow[i] = 0.0f; }
+    #endif
     for(int i=0; i<ASV_STEPS; i++) {
       magic_ptr->data->recent_volume[i] = 0.0f;
       magic_ptr->data->current_volume[i] = 0.0f;
@@ -131,30 +119,15 @@ static inline my_data_t * get_data() {
   return magic_ptr->data;
 }
 
-
-
 // TODO: Don't run ASV before stable TV has been achieved once: recent_tv_error = interp(recent_tv_error, abs(recent_tv - tv), xxx)
 // TODO: Safeguard against breath stacking: if ((te < avg_te * 0.7) && (residual_volume > peak_volume * 0.1f) ) { /* deliver no PS */ }
 //       residual_volume is set at breath start
-
-//Agenda:
-//    1. Graph deltatime, confirm if it's constant. If yes, dispense with calculating it.
-
-//ASV: 25ms steps. Grace(0-50ms), Early ramp(50-350ms), late ramp(350-700ms), stable(700ms+)
-//    Grace: Slower ramp, no adjustment
-//    Early ramp: Dampen hyperpnea, compensate hypopnea
-//    Late ramp: Compensate hypopnea
-//    Stable: Slower compensate hypopnea
-
-
-const float RISE_TIME=0.2f;  // 1.6 * 0.4 = ~0.65s ramp
-const float PS_INTERP=0.07f; // 0.1f is ~0.25s and sharp but comfy, 0.05f feels a bit slow
 
 static float * const fvars = (void*) 0x2000e948;
 static int * const ivars = (void*) 0x2000e750;
 
 void start(int param_1) {
-  const float progress = fvars[0x20]; // 1.6s to 0.5, 4.5s to 1.0 
+  const float progress = fvars[0x20]; // Inhale(1.6s to 0.5), Exhale(4.5s from 0.5 to 1.0). Seems breath-duration-dependent
   const float s_ipap = fvars[0xe];
   const float s_epap = fvars[0xf];
 
@@ -164,14 +137,11 @@ void start(int param_1) {
 
   float *cmd_ps = &fvars[0x29];
   float *cmd_epap = &fvars[0x28];
-  float *cmd_ipap = &fvars[0x2a]; // This is probably set to epap+ps elsewhere, and likely does nothing here
-  
-  // int ramping = (fvars[0x2a] >= s_epap); // Might or might not work
+  float *cmd_ipap = &fvars[0x2a]; // This is set to epap+ps elsewhere, and likely does nothing here
 
   my_data_t * d = get_data();
 
-  float delta = 0.010f; // It's 10ms +- 0.010mcs, basically constant
-
+  float delta = 0.010f; // It's 10+-0.01ms, basically constant
   const float flow = fvars[0x25] * delta; // Leak-compensated patient flow
 
   // Initialize new breath
@@ -206,6 +176,15 @@ void start(int param_1) {
 
     // TODO: d->dont_support = (d->volume / d->peak_volume) > 0.15f; // Also do TE-based calculation
     d->volume = 0.0f; // We just started a new breath, set volume to 0
+
+    #if COUNT_PRETRIGGER_FLOW == 1
+      for(int i=0; i<10; i++) { 
+        if (d->last_flow[i] > 0.0f) {
+          d->volume += d->last_flow[i];
+        }
+        d->last_flow[i] = 0.0f; 
+      }
+    #endif
     d->peak_volume = 0.0f;
     d->ticks = 0;
     d->breath_count += 1;
@@ -214,6 +193,11 @@ void start(int param_1) {
     if (d->ticks != -1) { d->ticks += 1; }
   }
   d->volume += flow;
+  #if COUNT_PRETRIGGER_FLOW == 1
+    if (d->ticks != -1) {
+      d->last_flow[d->ticks % 10] = flow;
+    }
+  #endif
   d->peak_volume = maxf(d->peak_volume, d->volume);
   d->duration += delta;
 
@@ -251,12 +235,12 @@ void start(int param_1) {
   if (d->current_ips > (ips)) {
     eps = maxf(0, eps - (d->current_ips - ips)*0.5f );
   }
-  ips = d->current_ips;
-
 
   // Allow myself to disable ASV during the night, if it disrupts my sleep after all
   if ((s_ipap - s_epap) > 2.9f) {
     ips = s_ipap - s_epap;
+  } else {
+    ips = d->current_ips;
   }
 
   *cmd_epap = epap;
@@ -268,35 +252,26 @@ void start(int param_1) {
       *cmd_ps = minf(ips, *cmd_ps + ips * delta / 0.7f ); // Avoid mid-slope PS drops.
     } else { // Exhale
       float volumebased_mult = map01c(d->volume, d->peak_volume * 0.15f, d->peak_volume * 0.70f); // At >70% residual volume == 1, below 15% == 0
-      *cmd_ps = interpmin(*cmd_ps, -eps * volumebased_mult, 0.053f, 2.0f * delta); // Convert to use dt: delta * 1cmH2O/s minimum // 0.075, 0.02 is ~300ms downslope. Marginally punchy
+      *cmd_ps = interpmin(*cmd_ps, -eps * volumebased_mult, 0.053f, 3.0f * delta); // Convert to use dt: delta * 1cmH2O/s minimum // 0.075, 0.02 is ~300ms downslope. Marginally punchy
     }
   }
   d->last_progress = progress;
 
   // Safeguards against going cray cray
-  *cmd_ps = clamp(*cmd_ps, -eps, +ips + ASV_MAX_IPS); // Just in case
+  *cmd_ps = clamp(*cmd_ps, -eps, +ips + ASV_MAX_IPS);
   *cmd_epap = clamp(*cmd_epap, s_epap - 2, s_epap + 2);
 
-  // Could probably get away with much less of this(ps-=0.2 isn't enough tho), but...
+  // Necessary to keep graphing code called(I think based on PS change, who cares)
   const float jitter = 0.02f - 0.04f * (tim_read_tim5() & 1);
   *cmd_ps += jitter; *cmd_epap += jitter * 2; *cmd_ipap += jitter*2;
 
   return;
 }
 
-/* // TODO ASV code and comments
-    // With this, 50% drop = +0.5f, 50% excess = -0.5f;
-  // float error = volume / d->recent_volume[i];
-  // float delta_ips = delta * 0.2f * (0.9f * d->recent_volume[i] - volume); // Volume-dependent version
-  
-  // TODO: Implement hyperpnea compensation
-  // if (volume > d->recent_volume[i] * 1.3f) {
-  //   d->current_ips = clamp(d->current_ips + delta_ips, ips * 0.666f, ips+ASV_MAX_IPS);
-  // } else {
-*/
+// int ramping = (fvars[0x2a] >= s_epap); // Might or might not work
 
 /* // Retired alternative ASV operation code
-  // Option B: Scale IPS relative to error (bad)
+  // Option B: Scale IPS relative to error
   float error = volume / recent_volume[i];
   if error >= 1.30f { // IPS: hyperpnea damping 
     current_ips = ips * map01c(error, 2.0f, 1.0f);

@@ -231,16 +231,16 @@ void start(int param_1) {
     }
   }
 
-  // Reduce EPS proportionally to extra IPS
-  if (d->current_ips > (ips)) {
-    eps = maxf(0, eps - (d->current_ips - ips)*0.5f );
-  }
 
   // Allow myself to disable ASV during the night, if it disrupts my sleep after all
   if ((s_ipap - s_epap) > 2.9f) {
     ips = s_ipap - s_epap;
   } else {
     ips = d->current_ips;
+    // (don't- I think it just contributes to expiratory intolerance) Reduce EPS proportionally to extra IPS
+    // if (d->current_ips > (ips)) {
+    //   eps = maxf(0, eps - (d->current_ips - ips)*0.5f );
+    // }
   }
 
   *cmd_epap = epap;
@@ -252,7 +252,7 @@ void start(int param_1) {
       *cmd_ps = minf(ips, *cmd_ps + ips * delta / 0.7f ); // Avoid mid-slope PS drops.
     } else { // Exhale
       float volumebased_mult = map01c(d->volume, d->peak_volume * 0.15f, d->peak_volume * 0.70f); // At >70% residual volume == 1, below 15% == 0
-      *cmd_ps = interpmin(*cmd_ps, -eps * volumebased_mult, 0.053f, 3.0f * delta); // Convert to use dt: delta * 1cmH2O/s minimum // 0.075, 0.02 is ~300ms downslope. Marginally punchy
+      *cmd_ps = interpmin(*cmd_ps, -eps * volumebased_mult, 0.06f, 3.0f * delta); // Convert to use dt: delta * 1cmH2O/s minimum // 0.075, 0.02 is ~300ms downslope. Marginally punchy
     }
   }
   d->last_progress = progress;

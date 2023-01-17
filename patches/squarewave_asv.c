@@ -1,6 +1,9 @@
 #include "stubs.h"
 
-#define COUNT_PRETRIGGER_FLOW 1 // Include pre-breath-start positive flow values into cumulative volume of current breath
+#define COUNT_PRETRIGGER_FLOW 0 // Include pre-breath-start positive flow values into cumulative volume of current breath
+                                // (maybe important for early calculations, but I think it's likely to underestimate limitations in )
+#define REDUCE_EPS_WHEN_ASV 0 // I think it just causes expiratory intolerance
+#define SLOPE_TARGETTING_ASV 0
 
 static inline float maxf(float a, float b) {
   if (a >= b) { return a; }
@@ -36,14 +39,6 @@ static inline float interpmin(float from, float to, float coeff, float min_speed
    } else {
      return from + clamp(rate, to-from, -min_speed);
    }
-}
-
-static inline float cinterp(float from, float to, float speed) {
-  if (to >= from) {
-    return from + minf(to - from, speed);
-  } else {
-    return from - minf(from - to, speed);
-  }
 }
 
 const int ASV_ADJUST_EVERY = 5; // 5 ticks (50ms) 
@@ -212,36 +207,77 @@ void start(int param_1) {
       if (i <= 3 || i >= 15 ) gain *= 0.5f;
       if (i <= 1) gain *= 0.25f;
 
-      // recent = 500, current = 400; (500-400)/500=0.2
+      // Right now, it targets 95-97%%
       float delta_ips = (d->recent_volume[i] - d->volume) / (d->recent_volume[i] +0.00001f); // Volume-independent version
       delta_ips = clamp(delta_ips, -0.5f, +0.5f); // Prevent anomalous values
-      if (delta_ips >= 0.1f) {
-        delta_ips = minf((ips + ASV_MAX_IPS) - d->current_ips, gain * (delta_ips-0.1f));
+      if (delta_ips >= 0.05f) {
+        delta_ips = minf((ips + ASV_MAX_IPS) - d->current_ips, gain * (delta_ips-0.05f));
         // delta_ips = gain * (delta_ips-0.1f);
       } else if (delta_ips <= -0.3f) { // Hyperpnea damping
         delta_ips = maxf(0.75f * ips - d->current_ips, gain * delta_ips);
-      } else if (delta_ips <= 0.06f) {
+      } else if (delta_ips <= 0.02f) {
         // delta_ips = 0.5f * gain * (delta_ips-0.06f); // Reducing it should be slower
-        delta_ips = maxf(minf(ips - d->current_ips, 0.0f), gain * (delta_ips-0.06f));
+        delta_ips = maxf(minf(ips - d->current_ips, 0.0f), gain * (delta_ips-0.02f));
       } else {
         delta_ips = 0.0f;
       }
-      // d->current_ips = clamp(d->current_ips + delta_ips, ips * 0.66f, ips+ASV_MAX_IPS+0.5f);
-      d->current_ips = clamp(d->current_ips + delta_ips, ips, ips+ASV_MAX_IPS);
+      d->current_ips = clamp(d->current_ips + delta_ips, ips * 0.75f, ips+ASV_MAX_IPS+0.5f);
+      // d->current_ips = clamp(d->current_ips + delta_ips, ips, ips+ASV_MAX_IPS);
     }
   }
-
 
   // Allow myself to disable ASV during the night, if it disrupts my sleep after all
   if ((s_ipap - s_epap) > 2.9f) {
     ips = s_ipap - s_epap;
   } else {
     ips = d->current_ips;
-    // (don't- I think it just contributes to expiratory intolerance) Reduce EPS proportionally to extra IPS
-    // if (d->current_ips > (ips)) {
-    //   eps = maxf(0, eps - (d->current_ips - ips)*0.5f );
-    // }
+    #if REDUCE_EPS_WHEN_ASV == 1
+      // (don't- I think it just contributes to expiratory intolerance) Reduce EPS proportionally to extra IPS
+      if (d->current_ips > (ips)) {
+         eps = maxf(0, eps - (d->current_ips - ips)*0.5f );
+      }
+    #endif
   }
+
+  // Slope: 4-12cmH2O/s (about 0.75s to 0.25s to 3cmH2O pressure) - lower than this is acceptable when ahead of the minimum slope
+  //   How to calculate if we're ahead of the original slope to IPS ?
+  //     
+  #if SLOPE_TARGETTING_ASV == 1
+    /*
+
+      float slope(float x1, float y1, float x2, float y2) {
+        return (y1 - y2) / (x1 - x2)
+      }
+
+      // // Alternative ASV code 
+      // float error = (d->recent_volume[i] - d->volume) / (d->recent_volume[i] +0.00001f)
+
+    if (breath_time < (min_slope / ips) - 0.05) {
+      const float PS_DAMPER = 0.65f; // During a hyperpnea, PS target can be reduced to this fraction.
+      const float SLOPE_MIN = 4.0f; // 750ms to 3 IPS
+      const float SLOPE_MAX = 12.0f; // 250ms to 3 IPS
+      // A: 2->3, 0.25/0.75
+      // B: 1->3, 0.50/0.75
+      // C: 4->3, 0.50/0.75
+      // D: 2->3, 1.00/0.75
+      // D: 4->3, 1.00/0.75
+      float damped_slope = minf(current_ips - ips*PS_DAMPER, 0.0f) / minf(breath_time - ips*PS_DAMPER / SLOPE_MIN, -0.01f) ;
+      float damped_slope = minf(damped_slope, 0.0f);
+      // when time is over or close to target, this shoots to stupid values, when it should be set to zero instead
+      float base_slope = minf(current_ips - ips, 0.0f) / minf(breath_time - ips / SLOPE_MIN, -0.01f);
+      // float base_slope = get_slope(current_ips, breath_time, ips, ips/SLOPE_MIN);
+      // float base_slope = minf(SLOPE_MIN, base_slope); // Lower between original and current slope to meeting minimum PS on time.
+      float base_slope = minf(base_slope, 0.0f); // Lower between original and current slope to meeting minimum PS on time.
+    } else {
+      damped_slope = 0.0f;
+      base_slope = 0.0f;
+    }
+    float max_slope = SLOPE_MAX;
+
+    float min_slope = 
+    float base_slope = minf(SLOPE_MIN, slope2);
+    float max_slope = minf(SLOPE_MAX); */
+  #endif
 
   *cmd_epap = epap;
   if (d->dont_support) {
@@ -252,7 +288,7 @@ void start(int param_1) {
       *cmd_ps = minf(ips, *cmd_ps + ips * delta / 0.7f ); // Avoid mid-slope PS drops.
     } else { // Exhale
       float volumebased_mult = map01c(d->volume, d->peak_volume * 0.15f, d->peak_volume * 0.70f); // At >70% residual volume == 1, below 15% == 0
-      *cmd_ps = interpmin(*cmd_ps, -eps * volumebased_mult, 0.06f, 3.0f * delta); // Convert to use dt: delta * 1cmH2O/s minimum // 0.075, 0.02 is ~300ms downslope. Marginally punchy
+      *cmd_ps = interpmin(*cmd_ps, -eps * volumebased_mult, 0.0625f, 3.0f * delta); // Convert to use dt: delta * 1cmH2O/s minimum // 0.075, 0.02 is ~300ms downslope. Marginally punchy
     }
   }
   d->last_progress = progress;
@@ -281,10 +317,3 @@ void start(int param_1) {
     current_ips = ips + asv_ips * map01c(error, 1.0f, 0.5f); 
   } else { } // IPS: Return to baseline
 // */
-
-// typedef struct {
-//   unsigned int is_keyword : 1;
-//   unsigned int is_extern : 1;
-//   unsigned int is_static : 1;
-//   __fp16 test;
-// } bitfield_t;

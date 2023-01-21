@@ -41,3 +41,12 @@ Resmed algo:
 Check how well outflow correlates to residual volume - `flow/test`, and pressure change-flow correlation.
 
 Track recent peak exhale, peak inhale. 1/4 of IPS follows breathing, all of EPS=EPAP/4-0.5 follows, targets 90% recent ExFlow
+
+py_analysis:
+  - Per-breath analysis
+  - (Premature trigger | start in rise of flow) vs (pressure at trigger | pressure gradient | TE)
+  - Error signal using vs not using pre-trigger volume, at 50ms checkpoints
+    - Error signal relative to total volume
+
+
+RM.ASV - 2022.09.05 2

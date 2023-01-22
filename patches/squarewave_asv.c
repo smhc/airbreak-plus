@@ -119,6 +119,7 @@ typedef struct {
 
   int dont_support;
   float asv_late_target;
+  float asv_target_slope;
 
   #if COUNT_PRETRIGGER_FLOW == 1
     float pretrigger_flow[10]; // 10t=100ms 
@@ -136,6 +137,7 @@ static INLINE void init_my_data(my_data_t *data) {
   data->ticks = -1; // Uninitialized
   data->dont_support = 0;
   data->asv_late_target = 0.0f;
+  data->asv_target_slope = 0.0f;
   #if COUNT_PRETRIGGER_FLOW == 1
     for(int i=0; i<10; i++) { data->pretrigger_flow[i] = 0.0f; }
   #endif
@@ -180,6 +182,7 @@ void start(int param_1) {
   float epap = s_epap;
   float ips = s_ips;
   float eps = 1.5f;
+  float slope = 4.5f;
 
   float *cmd_ps = &fvars[0x29];
   float *cmd_epap = &fvars[0x28];
@@ -197,27 +200,28 @@ void start(int param_1) {
 
     #if ASV_LATE == 1
       float peak_flow_error = (d->current.inh_maxflow - d->recent.inh_maxflow) / maxf(d->recent.inh_maxflow, 10.0f);
-      if (peak_flow_error < -0.05f) {
-        d->asv_late_target += map01c(peak_flow_error, 0.0f, -0.40f) * 1.0f + 0.2f;
+      if (peak_flow_error < -0.10f) {
+        d->asv_late_target += map01c(peak_flow_error, -0.05f, -0.40f) * 0.5f + 0.2f;
       } else if (peak_flow_error > 0.45f ){
         d->asv_late_target = d->asv_late_target * 0.5f - 0.1f;
       } else if (peak_flow_error >= 0.0f) {
-        d->asv_late_target *= 0.9f - map01c(peak_flow_error, 0.0f, 0.45f);
+        d->asv_late_target = d->asv_late_target * 0.9f - map01c(peak_flow_error, 0.0f, 0.45f) * 0.25f;
       }
       d->asv_late_target = clamp(d->asv_late_target, 0.0f, ASV_MAX_IPS);
+      d->asv_target_slope = d->asv_late_target * 1.5f;
     #endif
 
     d->recent.ips = maxf(d->recent.ips, s_ips);
     d->current.ips = d->recent.ips;
     // TODO: Replace d->duration with d->te
     if (((d->current.volume_max / d->recent.volume_max) <= 1.35f) || d->breath_count < 90) {
-    if ((d->current.duration > 2.0f) && (d->ticks != -1) && (d->dont_support == 0) ) {
+    if ((d->current.duration > d->recent.duration * 0.66f) && (d->ticks != -1) && (d->dont_support == 0) ) {
         asv_interp_all(&d->recent, &d->current);
     }}
 
     d->ticks = 0;
     d->breath_count += 1;
-    d->dont_support = ((d->current.volume / d->current.volume_max) > 0.15f) && (d->current.duration <= 2.0f); // TODO: TE-based calculation
+    d->dont_support = ((d->current.volume / d->current.volume_max) > 0.15f) && (d->current.te <= d->recent.te * 0.66f); // TODO: TE-based calculation
 
     #if COUNT_PRETRIGGER_FLOW == 1
       for(int i=0; i<10; i++) { 
@@ -278,18 +282,13 @@ void start(int param_1) {
         d->current.ips = clamp(d->current.ips + delta_ips, ips, ips+ASV_MAX_IPS);
       }
     }
-    // Allow myself to disable ASV during the night, if it disrupts my sleep after all
-    if ((s_ipap - s_epap) > 3.1f) {
-      ips = s_ipap - s_epap;
-    } else {
-      ips = d->current.ips;
-      #if REDUCE_EPS_WHEN_ASV == 1
-        // (don't- I think it just contributes to expiratory intolerance) Reduce EPS proportionally to extra IPS
-        if (d->current.ips > (ips)) {
-           eps = maxf(0, eps - (d->current.ips - ips)*0.5f );
-        }
-      #endif
-    }
+    ips = d->current.ips;
+    #if REDUCE_EPS_WHEN_ASV == 1
+      // (don't- I think it just contributes to expiratory intolerance) Reduce EPS proportionally to extra IPS
+      if (d->current.ips > (ips)) {
+         eps = maxf(0, eps - (d->current.ips - ips)*0.5f );
+      }
+    #endif
   #endif
 
 
@@ -344,18 +343,23 @@ void start(int param_1) {
     float max_slope = minf(SLOPE_MAX); */
   #endif
 
+  // Allow myself to disable ASV during the night, if it disrupts my sleep after all
+  if ((s_ipap - s_epap) > 3.3f) {
+    ips = s_ipap - s_epap;
+  } else {
+    slope = slope + d->asv_target_slope;
+  }
 
   // Set the commanded PS and EPAP values based on our target
   *cmd_epap = epap;
   if (d->dont_support) {
-    *cmd_ps = interp(*cmd_ps, 0.0f, 10.0f * delta); // Max of 10cmH2O/s change
+    *cmd_ps = interp(*cmd_ps, 0.0f, 3.0f * delta);
   } else {
-    // Interpolate PS and EPAP
     if (progress <= 0.5f) { // Inhale
-      *cmd_ps = minf(ips, *cmd_ps + ips * delta / 0.65f ); // Avoid mid-slope PS drops.
+      *cmd_ps = minf(ips, *cmd_ps + slope * delta ); // Avoid mid-slope PS drops.
     } else { // Exhale
       float volumebased_mult = map01c(d->current.volume, d->current.volume_max * 0.15f, d->current.volume_max * 0.70f); // At >70% residual volume == 1, below 15% == 0
-      *cmd_ps = interpmin(*cmd_ps, -eps * volumebased_mult, 0.0625f, 3.0f * delta); // Convert to use dt: delta * 1cmH2O/s minimum // 0.075, 0.02 is ~300ms downslope. Marginally punchy
+      *cmd_ps = interpmin(*cmd_ps, -eps * volumebased_mult, 0.0625f, 6.0f * delta);
     }
   }
   d->last_progress = progress;

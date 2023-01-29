@@ -1,5 +1,9 @@
 # TODO
 
+Breakpoint not_called_during_cycle_either, check what param_1 is 
+
+0x20010eac - param_1. IDK what lives here
+
 ## Big 
 
  - ASV mode

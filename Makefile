@@ -67,7 +67,6 @@ CFLAGS ?= \
 	-nostdlib \
 	-nostdinc \
 	-ffreestanding \
-	-finline-limit=99999 \
 
 ASFLAGS ?= $(CFLAGS)
 

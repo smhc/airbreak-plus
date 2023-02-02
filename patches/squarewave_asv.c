@@ -7,12 +7,27 @@
 #define REDUCE_EPS_WHEN_ASV 0 // I think it just causes expiratory intolerance
 
 #define ASV_EARLY 0 // TODO: Early ASV that increases slope when flow doesn't meet expectation
-#define ASV_EARLY_TARGET_FLOW 0 // Target flow instead of volume
+#define ASV_EARLY_TARGET_FLOW 1 // Target flow instead of volume
 
 #define ASV_LATE 0 // WIP: Standard ASV algo that targets peak flow
 
+#define IPS_FAST_SLOPE 1
+#define EPS_VOLUMEBASED 0
+
+// 20*5*10ms = 1s
+#define ASV_STEP_COUNT 20
+#define ASV_STEP_LENGTH 5
+#define ASV_STEP_SKIP 2 // Amount of steps before first doing ASV adjustments
+const float ASV_INTERP = 0.025; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
+const float ASV_MAX_IPS = 2.0f;
+const float EPS = 1.2f;
+
+static float * const fvars = (void*) 0x2000e948;
+static int * const ivars = (void*) 0x2000e750;
+
 typedef signed short int16;
 typedef signed char int8;
+typedef __fp16 float16;
 
 static INLINE float maxf(float a, float b) {
   if (a >= b) { return a; }
@@ -27,6 +42,7 @@ static INLINE float minf(float a, float b) {
 static INLINE float clamp(float a, float _min, float _max) {
   return maxf(minf(a, _max), _min);
 }
+static INLINE float clamp01(float a) { return clamp(a, 0.0f, 1.0f); }
 
 static INLINE float map01(float s, float start, float end) {
    return (s - start)/(end-start);
@@ -50,19 +66,12 @@ static INLINE float interpmin(float from, float to, float coeff, float min_speed
    }
 }
 
-// 20*5*10ms = 1s
-#define ASV_STEP_COUNT 20
-#define ASV_STEP_LENGTH 5
-#define ASV_STEP_SKIP 2 // Amount of steps before first doing ASV adjustments
-const float ASV_INTERP = 0.025; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
-const float ASV_MAX_IPS = 2.0f;
-
 static INLINE void asv_interp(float *value, float towards) {
   *value = interp(*value, towards, ASV_INTERP);
 }
 
 
-
+// Setup storage for important data
 typedef struct {
   float volume;
   float volume_max;
@@ -121,6 +130,7 @@ typedef struct {
   int dont_support;
   float asv_late_target;
   float asv_target_slope;
+  float asv_target_ips;
 
   float final_ips;
 
@@ -141,6 +151,7 @@ static INLINE void init_my_data(my_data_t *data) {
   data->dont_support = 0;
   data->asv_late_target = 0.0f;
   data->asv_target_slope = 0.0f;
+  data->asv_target_ips = 0.0f;
   data->final_ips = 0.0f;
   #if COUNT_PRETRIGGER_FLOW == 1
     for(int i=0; i<10; i++) { data->pretrigger_flow[i] = 0.0f; }
@@ -172,10 +183,8 @@ static INLINE my_data_t * get_data() {
 }
 
 
-static float * const fvars = (void*) 0x2000e948;
-static int * const ivars = (void*) 0x2000e750;
 
-
+// This is where the real magic starts
 // The entry point. All other functions MUST be inline
 void start(int param_1) {
   const float progress = fvars[0x20]; // Inhale(1.6s to 0.5), Exhale(4.5s from 0.5 to 1.0). Seems breath-duration-dependent
@@ -183,12 +192,11 @@ void start(int param_1) {
   const float s_epap = fvars[0xf];
   const float s_ips = s_ipap - s_epap;
 
-
-
   float epap = s_epap;
   float ips = s_ips;
-  float eps = 1.0f;
-  float slope = ips / 0.7f; // Slope to meet IPS in 700ms 
+  float eps = EPS;
+  float rise_time = 0.7f;
+  float slope = ips / rise_time; // Slope to meet IPS in 700ms 
 
   const float SLOPE_MIN = slope;
   const float SLOPE_MAX = 10.0f;
@@ -280,35 +288,30 @@ void start(int param_1) {
 
         #if ASV_EARLY_TARGET_FLOW == 1
           d->current.targets[i] = flow;
-          float error = (d->recent.targets[i] - flow) / minf(d->recent.targets[i], 0.001f); // Positive = need more flow
+          float error = (d->recent.targets[i] - flow) / (d->recent.targets[i] + 0.001f); // Positive = need more flow
         #else
           d->current.targets[i] = d->current.volume;
           float error = (d->recent.targets[i] - d->current.volume) / (d->recent.targets[i] +0.001f);
         #endif
-        error = clamp(error, -0.5f, 0.5f);
+        error = clamp(error, -0.6f, 0.6f);
 
         #if 1
-
-          if (d->asv_target_slope <= SLOPE_MIN) { d->asv_target_slope = SLOPE_MIN; }
-
-          float slope_max = SLOPE_MAX;
+          // float slope_max = SLOPE_MAX;
           // if breath_time >= ips / SLOPE_CURRENT
-          float slope_base = maxf((*cmd_ps - s_ips) / minf(d->current.duration - s_ips / d->asv_target_slope, -0.01f * ASV_STEP_LENGTH), 0.0f);
-          slope_base = minf(slope_base, d->asv_target_slope);
+          // float slope_base = maxf((*cmd_ps - s_ips) / minf(d->current.duration - s_ips / d->asv_target_slope, -0.01f * ASV_STEP_LENGTH), 0.0f);
+          // slope_base = minf(slope_base, d->asv_target_slope);
           float slope_min  = maxf((*cmd_ps - s_ips) / minf(d->current.duration - s_ips / SLOPE_MIN, -0.01f * ASV_STEP_LENGTH), 0.0f);
           slope_min = minf(slope_min, SLOPE_MIN);
+          float slope_max = slope_min + (SLOPE_MAX - SLOPE_MIN);
 
-          if (error >= 0.05f) {
-            slope = slope_base + map01c(error, 0.05f, 0.5f) * (slope_max - slope_base);
-          } else if (error <= 0.0f) {
-            slope = slope_min + map01c(error, 0.0f, -0.5f) * (slope_base - slope_min);
-            // slope = 4.5f;
+          if (error >= 0.10f) {
+            d->asv_target_slope = slope_min + map01c(error, 0.10f, 0.60f) * (slope_max - slope_min);
+            // d->asv_target_ips = s_asv + map01c(error, 0.05f, 0.5f) * ASV_MAX_IPS;
           } else {
-            slope = slope_base;
+            d->asv_target_slope = slope_min;
           }
 
-          slope = clamp(slope, 0.0f, SLOPE_MAX);
-          ips = s_ips + ASV_MAX_IPS;
+          d->asv_target_slope = clamp(d->asv_target_slope, 0.0f, SLOPE_MAX);
         #else
           // Cumulative volume relative error
           float gain = 10.0f * (ASV_STEP_LENGTH * delta); // 8.0/s 
@@ -330,6 +333,10 @@ void start(int param_1) {
           ips = d->current.ips;
         #endif
       }
+      ips = s_ips + ASV_MAX_IPS;
+      slope = d->asv_target_slope;
+    } else {
+      ips = maxf(s_ips, *cmd_ps);
     }
     #if REDUCE_EPS_WHEN_ASV == 1
       // (don't- I think it just contributes to expiratory intolerance) Reduce EPS proportionally to extra IPS
@@ -354,18 +361,28 @@ void start(int param_1) {
     *cmd_ps = interp(*cmd_ps, 0.0f, 3.0f * delta);
   } else {
     if (progress <= 0.5f) { // Inhale
-      *cmd_ps = minf(ips, *cmd_ps + slope * delta ); // Avoid mid-slope PS drops.
+      #if IPS_FAST_SLOPE == 1
+        // 0.5f * a + 0.5f * (1.0f - (1.0f - a) * (1.0f - a))
+        float a = clamp01(d->current.ti / (rise_time * 1.2f));
+        *cmd_ps = (1.0f - (1.0f - a) * (1.0f - a)) * ips;
+      #else
+        // This works with the ASV code, the above doesn't
+        *cmd_ps = minf(ips, *cmd_ps + slope * delta ); // Avoid mid-slope PS drops.
+      #endif
     } else { // Exhale
       // TODO: PS = map01c(d->current.volume / d->current.volume_max, 1.0f, 0.05f) * last_ips
       // Ver 03:
 
-      // FIXME: During leaky apneas, the pressure sometimes drops 
-      // TODO: If this is any punchy at all, try a^2 and 0.65s
+      #if EPS_VOLUMEBASED == 1
+        float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.1f, 0.6f);
+      #else
+        float eps_mult = map01c(d->current.te, maxf(d->recent.te * 0.80f, 1.4f), 0.0f); // Starts at 1, goes to 0 at 1.4s or 80% of recent exhale time.
+      #endif
       float a = map01c(d->current.te, 0.75f, 0.0f);
-      float rvc = clamp(d->current.volume / d->current.volume_max,0.0f,1.0f);
       float a2 = a*a*a;
-      *cmd_ps = a2 * d->final_ips - (1.0f - a2) * map01c(rvc, 0.1f, 0.65f) * eps;
+      *cmd_ps = a2 * d->final_ips - (1.0f - a2) * eps_mult * eps;
 
+      // FIXME: During leaky apneas, the pressure sometimes drops 
       // Ver 02: 
       // float residual_volume = d->current.volume / d->current.volume_max;
       // // float rvc = clamp(residual_volume,0.0f,1.0f);

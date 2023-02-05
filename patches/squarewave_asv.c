@@ -15,6 +15,7 @@
 #define ASV_LATE 0 // WIP: Standard ASV algo that targets peak flow
 
 #define IPS_FAST_SLOPE 1
+#define EPS_VOLUMEBASED 1
 
 // 20*5*10ms = 1s
 #define ASV_STEP_COUNT 20
@@ -23,7 +24,7 @@
 const float ASV_INTERP = 0.025; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
 const float ASV_MAX_IPS = 2.0f;
 const float ASV_MAX_EPAP = 2.0f;
-const float EPS = 1.0f;
+const float EPS = 0.6f;
 
 static float * const fvars = (void*) 0x2000e948;
 static int * const ivars = (void*) 0x2000e750;
@@ -115,7 +116,8 @@ typedef struct {
   float asv_late_target;
   float asv_target_slope;
   float asv_target_ips;
-  float asv_temp;
+  float asv_target_epap;
+  float asv_target_epap_adjustment;
 
   float final_ips;
 
@@ -137,7 +139,8 @@ static INLINE void init_my_data(my_data_t *data) {
   data->asv_late_target = 0.0f;
   data->asv_target_slope = 0.0f;
   data->asv_target_ips = 0.0f;
-  data->asv_temp = 0.0f;
+  data->asv_target_epap = 0.0f;
+  data->asv_target_epap_adjustment = 0.0f;
   data->final_ips = 0.0f;
   #if COUNT_PRETRIGGER_FLOW == 1
     for(int i=0; i<10; i++) { data->pretrigger_flow[i] = 0.0f; }
@@ -260,7 +263,6 @@ void start(int param_1) {
     d->dont_support = ((d->current.volume / d->current.volume_max) > 0.20f) && (d->current.te <= d->recent.te * 0.50f);
 
     d->final_ips = 0.0f;
-    d->asv_temp = 0.0f;
 
     #if COUNT_PRETRIGGER_FLOW == 1
       for(int i=0; i<10; i++) { 
@@ -293,13 +295,15 @@ void start(int param_1) {
     d->current.te += delta;
     if (d->final_ips == 0.0f) { 
       d->final_ips = *cmd_ps; 
-      // #if (ASV_EARLY_IPS == 1) && (ASV_EARLY_IPS_EPAP == 1)
-      //   d->asv_target_epap = d->asv_target_epap * 0.9f + map01c(d->final_ips, s_ips, s_ips + ASV_MAX_IPS) * 0.4f;
-      //   // d->asv_target_epap = clamp
+      // #if ASV_EARLY_IPS_EPAP == 1
+      //   d->asv_target_epap = (d->asv_target_epap - s_epap) * 0.8f + map01c(d->final_ips, s_ips, s_ips + ASV_MAX_IPS) * 0.4f;
       // #endif
     }
   }
 
+  // #if ASV_EARLY_IPS_EPAP == 1
+  //  d->asv_target_epap = clamp(d->asv_target_epap, s_epap, s_epap + ASV_MAX_EPAP);
+  // #endif
 
   #if ASV_LATE == 1
     ips = ips + d->asv_late_target;
@@ -307,72 +311,33 @@ void start(int param_1) {
 
   #if ASV_EARLY == 1
     // ASV operation
-    // Nevermind, run through the whole breath cycle, at least until hitting array bounds
-    // if (d->current.ti <= maxf(d->recent.ti * 0.75f, 0.7f)) {
-      // TODO: Remove - ASV_STEP_SKIP, so we have array entries for pre-asv ticks.
-      int i = d->ticks/ASV_STEP_LENGTH;
-      
-      // if (i>=0 && i<ASV_STEP_COUNT) { d->asv_temp += flow; }
+    int i = d->ticks/ASV_STEP_LENGTH;
 
-      if ((d->ticks % ASV_STEP_LENGTH == 0) && i>=ASV_STEP_SKIP && i<ASV_STEP_COUNT) {
-        d->current.targets[i] = d->current.volume;
-        float error_volume = (d->recent.targets[i] - d->current.volume) / (d->recent.targets[i] +0.001f);
+    if ((d->ticks % ASV_STEP_LENGTH == 0) && i>=ASV_STEP_SKIP && i<ASV_STEP_COUNT) {
+      d->current.targets[i] = d->current.volume;
+      float error_volume = (d->recent.targets[i] - d->current.volume) / (d->recent.targets[i] +0.001f);
 
-        float recent_flow = d->recent.targets[i] - d->recent.targets[i-1];
-        float current_flow = d->current.targets[i] - d->current.targets[i-1];
-        float error_flow = (recent_flow - current_flow) / (recent_flow + 0.001f); // No need to divide by step length
+      float recent_flow = d->recent.targets[i] - d->recent.targets[i-1];
+      float current_flow = d->current.targets[i] - d->current.targets[i-1];
+      float error_flow = (recent_flow - current_flow) / (recent_flow + 0.001f); // No need to divide by step length
 
-        #if ASV_EARLY_SLOPE == 1
-          float error = clamp(error_flow, -0.6f, 0.6f);
-          // float slope_max = SLOPE_MAX;
-          // if breath_time >= ips / SLOPE_CURRENT
-          // float slope_base = maxf((*cmd_ps - s_ips) / minf(d->current.duration - s_ips / d->asv_target_slope, -0.01f * ASV_STEP_LENGTH), 0.0f);
-          // slope_base = minf(slope_base, d->asv_target_slope);
-          float slope_min  = maxf((*cmd_ps - s_ips) / minf(d->current.duration - s_ips / SLOPE_MIN, -0.01f * ASV_STEP_LENGTH), 0.0f);
-          slope_min = minf(slope_min, SLOPE_MIN);
-          float slope_max = slope_min + (SLOPE_MAX - SLOPE_MIN);
+      // Cumulative volume relative error
+      float gain = 8.0f * (ASV_STEP_LENGTH * delta);
 
-          if (error >= 0.10f) {
-            d->asv_target_slope = slope_min + map01c(error, 0.10f, 0.60f) * (slope_max - slope_min);
-            // d->asv_target_ips =
-          } else {
-            d->asv_target_slope = slope_min;
-          }
-
-          d->asv_target_slope = clamp(d->asv_target_slope, 0.0f, SLOPE_MAX);
-        #endif
-        // d->asv_target_ips = maxf(*cmd_ps, s_ips + ASV_MAX_IPS * map01c(error_volume))
-        // d->asv_target_ips = clamp(s_ips + ASV_MAX_IPS * error_volume * 2.0f, maxf(*cmd_ps, s_ips), s_ips + ASV_MAX_IPS);
-
-        #if ASV_EARLY_IPS == 1
-          // Cumulative volume relative error
-          float gain = 5.0f * (ASV_STEP_LENGTH * delta);
-
-          // Right now, it targets 90-95% of recent TV
-          float delta_ips = error_volume; 
-          delta_ips = clamp(delta_ips, -0.5f, +0.5f); // Prevent anomalous values
-          if (delta_ips >= 0.10f) {
-            delta_ips = gain * (delta_ips-0.10f);
-          } else if (delta_ips <= 0.05f) {
-            delta_ips = gain * (delta_ips-0.05f);
-          } else {
-            delta_ips = 0.0f;
-          }
-          d->current.ips = clamp(d->current.ips + delta_ips, maxf(s_ips, *cmd_ps), s_ips+ASV_MAX_IPS);
-
-          d->asv_target_slope = SLOPE_MIN + (SLOPE_MAX - SLOPE_MIN) * map01c(error_flow, 0.05f, 0.6f);
-        #endif
+      // Right now, it targets 90-95% of recent TV.
+      float delta_ips = error_volume;
+      delta_ips = clamp(delta_ips, -0.5f, +0.5f); // Prevent anomalous values
+      if (delta_ips >= 0.10f) {
+        delta_ips = gain * (delta_ips-0.10f);
+      } else if (delta_ips <= 0.05f) {
+        delta_ips = gain * (delta_ips-0.05f);
+      } else {
+        delta_ips = 0.0f;
       }
+      d->current.ips = clamp(d->current.ips + delta_ips, maxf(s_ips, *cmd_ps), s_ips+ASV_MAX_IPS);
 
-      #if ASV_EARLY_SLOPE == 1
-        ips = s_ips + ASV_MAX_IPS;
-        slope = d->asv_target_slope;
-      #endif 
-    // } else {
-    //   #if ASV_EARLY_SLOPE
-    //     ips = maxf(s_ips, *cmd_ps);
-    //   #endif
-    // }
+      d->asv_target_slope = SLOPE_MIN + (SLOPE_MAX - SLOPE_MIN) * map01c(error_flow, 0.05f, 0.4f);
+    }
     ips = maxf(d->current.ips, s_ips);
     slope = maxf(SLOPE_MIN, d->asv_target_slope);
     #if REDUCE_EPS_WHEN_ASV == 1
@@ -386,7 +351,8 @@ void start(int param_1) {
 
   #if (ASV_LATE == 1) || (ASV_EARLY == 1)
     // Allow myself to disable ASV during the night, if it disrupts my sleep after all
-    if (s_ips > 2.9f) {
+    // if ( {
+    if ((s_ips > 3.3f) || (s_ipap > 11.1f)) {
       ips = s_ips;
       slope = SLOPE_MIN;
     }
@@ -398,48 +364,31 @@ void start(int param_1) {
     *cmd_ps = interp(*cmd_ps, 0.0f, 3.0f * delta);
   } else {
     if (progress <= 0.5f) { // Inhale
-      // // Exponential ramp to max
-      // float t = d->current.ti;
-      // float a = clamp01(t / rise_time);
-      // *cmd_ps = (1.0f - (1.0f - a) * (1.0f - a)) * ips;
-
-      // This works with the ASV code, the above doesn't
+      if (ips - *cmd_ps <= 0.3f) { slope *= 0.5f; }
       *cmd_ps = minf(ips, *cmd_ps + slope * delta ); // Avoid mid-slope PS drops.
     } else { // Exhale
       float t = d->current.te;
       // TODO: PS = map01c(d->current.volume / d->current.volume_max, 1.0f, 0.05f) * last_ips
       // Ver 03:
 
-      float eps_mult = 0.0f;
-      float t_midpoint = maxf(d->recent.te * 0.70f, 1.2f) / 2.0f;
-      float t_endpoint = maxf(d->recent.te * 0.70f, 1.2f);
-      if (t <= t_midpoint) {
-        eps_mult = map01(t, 0.0f, t_midpoint);
-      } else if (t <= t_endpoint ) {
-        eps_mult = map01(t, t_endpoint, t_midpoint);
-      }
+      #if EPS_VOLUMEBASED == 1
+        float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.1f, 0.6f);
+        eps_mult = minf(eps_mult, map01c(d->current.te, 1.2f, 0.4f));
+      #else
+        float eps_mult = 0.0f;
+        float t_midpoint = maxf(d->recent.te * 0.70f, 1.2f) / 2.0f;
+        float t_endpoint = maxf(d->recent.te * 0.70f, 1.2f);
+        if (t <= t_midpoint) {
+          eps_mult = map01(t, 0.0f, t_midpoint);
+        } else if (t <= t_endpoint ) {
+          eps_mult = map01(t, t_endpoint, t_midpoint);
+        }
+      #endif
 
       // Previous ver: 0.75s, and a*a*a
-      float a = map01c(d->current.te, 0.4f, 0.0f);
-      float a2 = a*a;
-      *cmd_ps = a2 * d->final_ips - (1.0f - a2) * eps_mult * eps;
-
-      // float volumebased_mult = map01c(d->current.volume / d->current.volume_max, 0.1f, 0.6f);
-      // volumebased_mult = minf(volumebased_mult, map01c(d->current.te, 1.4f, 0.4f));
-
-      // FIXME: During leaky apneas, the pressure sometimes drops 
-      // Ver 02: 
-      // float residual_volume = d->current.volume / d->current.volume_max;
-      // // float rvc = clamp(residual_volume,0.0f,1.0f);
-      // float rvc = map01c(residual_volume, 0.2f, 1.05f);
-      // float rv2 = rvc*rvc*rvc;
-      // *cmd_ps = d->final_ips * rv2;
-      // *cmd_ps = d->final_ips * rv2 - (1.0f - rv2) * map01c(rvc, 0.1f, 0.5f) * eps;
-
-
-      // Ver 01: Interp to -eps, ramp up to 0 accordingly with volume
-      // float volumebased_mult = map01c(d->current.volume, d->current.volume_max * 0.15f, d->current.volume_max * 0.70f); // At >70% residual volume == 1, below 15% == 0
-      // *cmd_ps = interpmin(*cmd_ps, -eps * volumebased_mult, 0.0625f, 4.0f * delta);
+      float a = map01c(d->current.te, 0.5f, 0.0f); a = a * a;
+      // float a = map01c(d->current.te, 0.3f, 0.0f);
+      *cmd_ps = a * d->final_ips - (1.0f - a) * eps_mult * eps;
     }
   }
   d->last_progress = progress;
@@ -447,6 +396,7 @@ void start(int param_1) {
   // Safeguards against going cray cray
   *cmd_ps = clamp(*cmd_ps, -eps, s_ips + ASV_MAX_IPS);
   *cmd_epap = clamp(*cmd_epap, s_epap - 1, s_epap + 1);
+  *cmd_ipap = *cmd_epap + *cmd_ps;
 
   // Necessary to keep graphing code called(I think based on PS change, who cares)
   const float jitter = 0.02f - 0.04f * (tim_read_tim5() & 1);

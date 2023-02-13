@@ -15,6 +15,8 @@
 #define ASV_LATE 0 // WIP: Standard ASV algo that targets peak flow
 
 #define IPS_FAST_SLOPE 1
+
+#define EPS_ENABLE 1
 #define EPS_VOLUMEBASED 1
 
 // 20*5*10ms = 1s
@@ -24,7 +26,7 @@
 const float ASV_INTERP = 0.025; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
 const float ASV_MAX_IPS = 2.0f;
 const float ASV_MAX_EPAP = 2.0f;
-const float EPS = 0.6f;
+const float EPS = 0.4f;
 
 static float * const fvars = (void*) 0x2000e948;
 static int * const ivars = (void*) 0x2000e750;
@@ -322,20 +324,26 @@ void start(int param_1) {
       float error_flow = (recent_flow - current_flow) / (recent_flow + 0.001f); // No need to divide by step length
 
       // Cumulative volume relative error
-      float gain = 8.0f * (ASV_STEP_LENGTH * delta);
+      // float gain = 8.0f * (ASV_STEP_LENGTH * delta);
 
-      // Right now, it targets 90-95% of recent TV.
-      float delta_ips = error_volume;
-      delta_ips = clamp(delta_ips, -0.5f, +0.5f); // Prevent anomalous values
-      if (delta_ips >= 0.10f) {
-        delta_ips = gain * (delta_ips-0.10f);
-      } else if (delta_ips <= 0.05f) {
-        delta_ips = gain * (delta_ips-0.05f);
-      } else {
-        delta_ips = 0.0f;
-      }
-      d->current.ips = clamp(d->current.ips + delta_ips, maxf(s_ips, *cmd_ps), s_ips+ASV_MAX_IPS);
+      // // Right now, it targets 90-95% of recent TV.
+      // float delta_ips = error_volume;
+      // delta_ips = clamp(delta_ips, -0.5f, +0.5f); // Prevent anomalous values
+      // if (delta_ips >= 0.10f) {
+      //   delta_ips = gain * (delta_ips-0.10f);
+      // } else if (delta_ips <= 0.05f) {
+      //   delta_ips = gain * (delta_ips-0.05f);
+      // } else {
+      //   delta_ips = 0.0f;
+      // }
+      // d->current.ips = clamp(d->current.ips + delta_ips, maxf(s_ips, *cmd_ps), s_ips+ASV_MAX_IPS);
 
+
+      // Map 90-50% volume to 0-1, base extra IPS on that.
+      float extra_ips = map01c(error_volume, 0.1f, 0.5f) * ASV_MAX_IPS;
+      d->current.ips = clamp(s_ips + extra_ips, maxf(s_ips, *cmd_ps), s_ips + ASV_MAX_IPS);
+
+      // Set slope based on current flow deficit
       d->asv_target_slope = SLOPE_MIN + (SLOPE_MAX - SLOPE_MIN) * map01c(error_flow, 0.05f, 0.4f);
     }
     ips = maxf(d->current.ips, s_ips);
@@ -364,30 +372,41 @@ void start(int param_1) {
     *cmd_ps = interp(*cmd_ps, 0.0f, 3.0f * delta);
   } else {
     if (progress <= 0.5f) { // Inhale
-      if (ips - *cmd_ps <= 0.3f) { slope *= 0.5f; }
+      if (ips - *cmd_ps <= 0.4f) { slope *= 0.5f; }
+      if (ips - *cmd_ps <= 0.2f) { slope *= 0.5f; }
       *cmd_ps = minf(ips, *cmd_ps + slope * delta ); // Avoid mid-slope PS drops.
     } else { // Exhale
       float t = d->current.te;
       // TODO: PS = map01c(d->current.volume / d->current.volume_max, 1.0f, 0.05f) * last_ips
       // Ver 03:
 
-      #if EPS_VOLUMEBASED == 1
-        float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.1f, 0.6f);
-        eps_mult = minf(eps_mult, map01c(d->current.te, 1.2f, 0.4f));
+      #if EPS_ENABLE == 1
+        #if EPS_VOLUMEBASED == 1
+          float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.1f, 0.6f);
+          eps_mult = minf(eps_mult, map01c(t, 1.2f, 0.4f));
+        #else
+          float eps_mult = 0.0f;
+          float t_midpoint = maxf(t * 0.70f, 1.2f) / 2.0f;
+          float t_endpoint = maxf(t * 0.70f, 1.2f);
+          if (t <= t_midpoint) {
+            eps_mult = map01(t, 0.0f, t_midpoint);
+          } else if (t <= t_endpoint ) {
+            eps_mult = map01(t, t_endpoint, t_midpoint);
+          }
+        #endif
       #else
-        float eps_mult = 0.0f;
-        float t_midpoint = maxf(d->recent.te * 0.70f, 1.2f) / 2.0f;
-        float t_endpoint = maxf(d->recent.te * 0.70f, 1.2f);
-        if (t <= t_midpoint) {
-          eps_mult = map01(t, 0.0f, t_midpoint);
-        } else if (t <= t_endpoint ) {
-          eps_mult = map01(t, t_endpoint, t_midpoint);
-        }
+          float eps_mult = 0.0f;
       #endif
 
-      // Previous ver: 0.75s, and a*a*a
-      float a = map01c(d->current.te, 0.5f, 0.0f); a = a * a;
-      // float a = map01c(d->current.te, 0.3f, 0.0f);
+      #if 0
+        float a = map01c(d->current.te, 0.5f, 0.0f); a = a * a;
+        // float a = map01c(d->current.te, 0.3f, 0.0f);
+        // *cmd_ps = a * d->final_ips;
+      #else
+        float a = map01c(t, 0.6f, 0.0f);
+        a = maxf(2.0f * (a-0.5f), a*a*a);
+        // *cmd_ps = a * d->final_ips;
+      #endif
       *cmd_ps = a * d->final_ips - (1.0f - a) * eps_mult * eps;
     }
   }

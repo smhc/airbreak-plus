@@ -17,7 +17,8 @@
 #define IPS_FAST_SLOPE 1
 
 #define EPS_ENABLE 1
-#define EPS_VOLUMEBASED 1
+#define EPS_VOLUMEBASED 0
+const float EPS_FIXED_TIME = 1.1f; 
 
 // 20*5*10ms = 1s
 #define ASV_STEP_COUNT 20
@@ -26,7 +27,7 @@
 const float ASV_INTERP = 0.025; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
 const float ASV_MAX_IPS = 2.0f;
 const float ASV_MAX_EPAP = 2.0f;
-const float EPS = 0.4f;
+const float EPS = 1.0f;
 
 static float * const fvars = (void*) 0x2000e948;
 static int * const ivars = (void*) 0x2000e750;
@@ -217,7 +218,7 @@ void start(int param_1) {
   float epap = s_epap;
   float ips = s_ips;
   float eps = EPS;
-  float rise_time = 0.70f;
+  float rise_time = 0.75f;
   float slope = ips / rise_time; // Slope to meet IPS in 700ms 
 
   const float SLOPE_MIN = slope;
@@ -339,8 +340,8 @@ void start(int param_1) {
       // d->current.ips = clamp(d->current.ips + delta_ips, maxf(s_ips, *cmd_ps), s_ips+ASV_MAX_IPS);
 
 
-      // Map 90-50% volume to 0-1, base extra IPS on that.
-      float extra_ips = map01c(error_volume, 0.1f, 0.5f) * ASV_MAX_IPS;
+      // Map 95-50% volume to 0-1, base extra IPS on that.
+      float extra_ips = map01c(error_volume, 0.05f, 0.5f) * ASV_MAX_IPS * 2.0f;
       d->current.ips = clamp(s_ips + extra_ips, maxf(s_ips, *cmd_ps), s_ips + ASV_MAX_IPS);
 
       // Set slope based on current flow deficit
@@ -360,7 +361,7 @@ void start(int param_1) {
   #if (ASV_LATE == 1) || (ASV_EARLY == 1)
     // Allow myself to disable ASV during the night, if it disrupts my sleep after all
     // if ( {
-    if ((s_ips > 3.3f) || (s_ipap > 11.1f)) {
+    if (s_ips > 2.9f) {
       ips = s_ips;
       slope = SLOPE_MIN;
     }
@@ -383,11 +384,11 @@ void start(int param_1) {
       #if EPS_ENABLE == 1
         #if EPS_VOLUMEBASED == 1
           float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.1f, 0.6f);
-          eps_mult = minf(eps_mult, map01c(t, 1.2f, 0.4f));
+          eps_mult = minf(eps_mult, map01c(t, EPS_FIXED_TIME, 0.4f));
         #else
           float eps_mult = 0.0f;
-          float t_midpoint = maxf(t * 0.70f, 1.2f) / 2.0f;
-          float t_endpoint = maxf(t * 0.70f, 1.2f);
+          float t_midpoint = maxf(t * 0.65f, EPS_FIXED_TIME) / 2.0f;
+          float t_endpoint = maxf(t * 0.65f, EPS_FIXED_TIME);
           if (t <= t_midpoint) {
             eps_mult = map01(t, 0.0f, t_midpoint);
           } else if (t <= t_endpoint ) {
@@ -398,8 +399,8 @@ void start(int param_1) {
           float eps_mult = 0.0f;
       #endif
 
-      #if 0
-        float a = map01c(d->current.te, 0.5f, 0.0f); a = a * a;
+      #if 1
+        float a = map01c(d->current.te, 0.55f, 0.0f); a = a * a;
         // float a = map01c(d->current.te, 0.3f, 0.0f);
         // *cmd_ps = a * d->final_ips;
       #else

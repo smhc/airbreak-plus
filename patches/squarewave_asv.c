@@ -16,7 +16,7 @@
 
 #define IPS_FAST_SLOPE 1
 
-#define EPS_ENABLE 1
+#define EPS_ENABLE 0
 #define EPS_VOLUMEBASED 0
 const float EPS_FIXED_TIME = 1.1f; 
 
@@ -28,6 +28,8 @@ const float ASV_INTERP = 0.025; // ~45% from last 15 breaths, ~70% from 30, ~88%
 const float ASV_MAX_IPS = 2.0f;
 const float ASV_MAX_EPAP = 2.0f;
 const float EPS = 1.0f;
+
+const float slope_down_t = 0.8f;
 
 static float * const fvars = (void*) 0x2000e948;
 static int * const ivars = (void*) 0x2000e750;
@@ -345,7 +347,7 @@ void start(int param_1) {
       d->current.ips = clamp(s_ips + extra_ips, maxf(s_ips, *cmd_ps), s_ips + ASV_MAX_IPS);
 
       // Set slope based on current flow deficit
-      d->asv_target_slope = SLOPE_MIN + (SLOPE_MAX - SLOPE_MIN) * map01c(error_flow, 0.05f, 0.4f);
+      d->asv_target_slope = SLOPE_MIN + (SLOPE_MAX - SLOPE_MIN) * map01c(error_flow, 0.05f, 0.3f);
     }
     ips = maxf(d->current.ips, s_ips);
     slope = maxf(SLOPE_MIN, d->asv_target_slope);
@@ -400,7 +402,7 @@ void start(int param_1) {
       #endif
 
       #if 1
-        float a = map01c(d->current.te, 0.55f, 0.0f); a = a * a;
+        float a = map01c(d->current.te, slope_down_t, 0.0f); a = a * a * 0.95f;
         // float a = map01c(d->current.te, 0.3f, 0.0f);
         // *cmd_ps = a * d->final_ips;
       #else

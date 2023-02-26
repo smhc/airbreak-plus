@@ -16,7 +16,7 @@
 
 #define IPS_FAST_SLOPE 1
 
-#define EPS_ENABLE 0
+#define EPS_ENABLE 1
 #define EPS_VOLUMEBASED 0
 const float EPS_FIXED_TIME = 1.1f; 
 
@@ -27,9 +27,9 @@ const float EPS_FIXED_TIME = 1.1f;
 const float ASV_INTERP = 0.025; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
 const float ASV_MAX_IPS = 2.0f;
 const float ASV_MAX_EPAP = 2.0f;
-const float EPS = 1.0f;
+const float EPS = 0.4f;
 
-const float slope_down_t = 0.8f;
+const float slope_down_t = 0.75f;
 
 static float * const fvars = (void*) 0x2000e948;
 static int * const ivars = (void*) 0x2000e750;
@@ -343,11 +343,12 @@ void start(int param_1) {
 
 
       // Map 95-50% volume to 0-1, base extra IPS on that.
-      float extra_ips = map01c(error_volume, 0.05f, 0.5f) * ASV_MAX_IPS * 2.0f;
+      float temp = map01c(error_flow, 0.05f, 0.3f);
+      float extra_ips = (map01c(error_volume, 0.05f, 0.5f) + temp*0.125f) * ASV_MAX_IPS * 2.0f;
       d->current.ips = clamp(s_ips + extra_ips, maxf(s_ips, *cmd_ps), s_ips + ASV_MAX_IPS);
 
       // Set slope based on current flow deficit
-      d->asv_target_slope = SLOPE_MIN + (SLOPE_MAX - SLOPE_MIN) * map01c(error_flow, 0.05f, 0.3f);
+      d->asv_target_slope = SLOPE_MIN + (SLOPE_MAX - SLOPE_MIN) * temp;
     }
     ips = maxf(d->current.ips, s_ips);
     slope = maxf(SLOPE_MIN, d->asv_target_slope);
@@ -363,7 +364,10 @@ void start(int param_1) {
   #if (ASV_LATE == 1) || (ASV_EARLY == 1)
     // Allow myself to disable ASV during the night, if it disrupts my sleep after all
     // if ( {
-    if (s_ips > 2.9f) {
+
+    float a = (s_epap - (int)s_epap);
+    if (((a >= 0.1f) && (a <= 0.3f)) || ((a >= 0.7f) && (a <= 0.9f))) {
+    // if (s_ips > 2.9f) {
       ips = s_ips;
       slope = SLOPE_MIN;
     }

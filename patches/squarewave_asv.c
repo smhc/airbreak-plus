@@ -27,9 +27,7 @@ const float EPS_FIXED_TIME = 1.1f;
 const float ASV_INTERP = 0.025; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
 const float ASV_MAX_IPS = 2.0f;
 const float ASV_MAX_EPAP = 2.0f;
-const float EPS = 0.4f;
 
-const float slope_down_t = 0.75f;
 
 static float * const fvars = (void*) 0x2000e948;
 static int * const ivars = (void*) 0x2000e750;
@@ -219,9 +217,10 @@ void start(int param_1) {
 
   float epap = s_epap;
   float ips = s_ips;
-  float eps = EPS;
-  float rise_time = 0.75f;
-  float slope = ips / rise_time; // Slope to meet IPS in 700ms 
+  float eps = 0.0f;
+  float rise_time = 0.60f;
+  float slope = ips / rise_time; // Slope to meet IPS in rise_time milliseconds 
+  float fall_time = 0.7f;
 
   const float SLOPE_MIN = slope;
   const float SLOPE_MAX = 10.0f;
@@ -343,7 +342,7 @@ void start(int param_1) {
 
 
       // Map 95-50% volume to 0-1, base extra IPS on that.
-      float temp = map01c(error_flow, 0.05f, 0.3f);
+      float temp = map01c(error_flow, 0.05f, 0.4f);
       float extra_ips = (map01c(error_volume, 0.05f, 0.5f) + temp*0.125f) * ASV_MAX_IPS * 2.0f;
       d->current.ips = clamp(s_ips + extra_ips, maxf(s_ips, *cmd_ps), s_ips + ASV_MAX_IPS);
 
@@ -373,14 +372,25 @@ void start(int param_1) {
     }
   #endif
 
+  if (s_epap >= 8.9f ) {
+    eps = 1.0f;
+    fall_time = 0.9f;
+  }
+
   // Set the commanded PS and EPAP values based on our target
   *cmd_epap = epap;
   if (d->dont_support) {
     *cmd_ps = interp(*cmd_ps, 0.0f, 3.0f * delta);
   } else {
     if (progress <= 0.5f) { // Inhale
+      float t = d->current.ti;
       if (ips - *cmd_ps <= 0.4f) { slope *= 0.5f; }
       if (ips - *cmd_ps <= 0.2f) { slope *= 0.5f; }
+
+      // Slows slope by 66ms
+      if (t <= 0.050f) { slope *= 0.707f; }
+      if (t <= 0.100f) { slope *= 0.707f; }
+
       *cmd_ps = minf(ips, *cmd_ps + slope * delta ); // Avoid mid-slope PS drops.
     } else { // Exhale
       float t = d->current.te;
@@ -406,7 +416,7 @@ void start(int param_1) {
       #endif
 
       #if 1
-        float a = map01c(d->current.te, slope_down_t, 0.0f); a = a * a * 0.95f;
+        float a = map01c(d->current.te, fall_time, 0.0f); a = a * a * 0.95f;
         // float a = map01c(d->current.te, 0.3f, 0.0f);
         // *cmd_ps = a * d->final_ips;
       #else

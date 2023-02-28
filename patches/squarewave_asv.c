@@ -24,7 +24,6 @@ const float EPS_FIXED_TIME = 1.1f;
 #define ASV_STEP_COUNT 20
 #define ASV_STEP_LENGTH 5
 #define ASV_STEP_SKIP 1 // Amount of steps before first doing ASV adjustments. MUST be at least 1 or code will crash due to out of bounds target array read
-const float ASV_INTERP = 0.025; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
 const float ASV_MAX_IPS = 2.0f;
 const float ASV_MAX_EPAP = 2.0f;
 
@@ -73,8 +72,8 @@ static INLINE float interpmin(float from, float to, float coeff, float min_speed
    }
 }
 
-static INLINE void asv_interp(float *value, float towards) {
-  *value = interp(*value, towards, ASV_INTERP);
+static INLINE void interp_inplace(float *value, float towards, float coeff) {
+  *value = interp(*value, towards, coeff);
 }
 
 
@@ -153,25 +152,31 @@ static INLINE void init_my_data(my_data_t *data) {
 }
 
 
+const float ASV_INTERP = 0.025f; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
 static INLINE void asv_interp_all(my_data_t* data) {
   breath_t *recent = &data->recent;
   breath_t *current = &data->current;
+  float coeff = ASV_INTERP;
+  float coeff_v = coeff; // Update volumes a bit differently
+  if (current->volume_max < recent->volume_max) { // Update downwards a bit slower.
+    coeff_v = 0.0175f;
+  }
   // Don't adjust targets if it's a hyperpnea. Breath count hardcoded for ASV_INTERP=0.025f constant.
   // TODO: Instead of counting breaths, wait for average error to stabilize
   for(int i=0; i<ASV_STEP_COUNT; i++) {
     // If it has zero volume, it means the breath was past its peak already, ignore it.
     if (current->targets[i] > 0.0f) {
-      asv_interp(&recent->targets[i], current->targets[i]);
+      interp_inplace(&recent->targets[i], current->targets[i], coeff_v);
     }
     current->targets[i] = 0.0f;
   }
-  asv_interp(&recent->volume_max, current->volume_max);
-  asv_interp(&recent->duration, current->duration);
-  asv_interp(&recent->exh_maxflow, current->exh_maxflow);
-  asv_interp(&recent->inh_maxflow, current->inh_maxflow);
-  asv_interp(&recent->ti, current->ti);
-  asv_interp(&recent->te, current->te);
-  recent->ips = interp(recent->ips, current->ips, 0.5f);
+  interp_inplace(&recent->volume_max, current->volume_max, coeff_v);
+  interp_inplace(&recent->duration, current->duration, coeff);
+  interp_inplace(&recent->exh_maxflow, current->exh_maxflow, coeff);
+  interp_inplace(&recent->inh_maxflow, current->inh_maxflow, coeff);
+  interp_inplace(&recent->ti, current->ti, coeff);
+  interp_inplace(&recent->te, current->te, coeff);
+  // interp_inplace(&recent->ips, current->ips, 0.5f);
 }
 
 
@@ -217,10 +222,10 @@ void start(int param_1) {
 
   float epap = s_epap;
   float ips = s_ips;
-  float eps = 0.0f;
-  float rise_time = 0.60f;
+  float eps = 0.4f;
+  float rise_time = 0.6f;
   float slope = ips / rise_time; // Slope to meet IPS in rise_time milliseconds 
-  float fall_time = 0.7f;
+  float fall_time = 0.6f;
 
   const float SLOPE_MIN = slope;
   const float SLOPE_MAX = 10.0f;
@@ -373,8 +378,8 @@ void start(int param_1) {
   #endif
 
   if (s_epap >= 8.9f ) {
-    eps = 1.0f;
-    fall_time = 0.9f;
+    eps = 1.2f;
+    fall_time = 0.8f;
   }
 
   // Set the commanded PS and EPAP values based on our target
@@ -399,7 +404,7 @@ void start(int param_1) {
 
       #if EPS_ENABLE == 1
         #if EPS_VOLUMEBASED == 1
-          float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.1f, 0.6f);
+          float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.05f, 0.6f);
           eps_mult = minf(eps_mult, map01c(t, EPS_FIXED_TIME, 0.4f));
         #else
           float eps_mult = 0.0f;

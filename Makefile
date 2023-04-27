@@ -75,6 +75,9 @@ LDFLAGS ?= \
 	--no-dynamic-linker \
 	--Ttext $($*-offset) \
 	--entry start \
+	--sort-section=name \
+
+# TODO: Sort sections by name, lay out main before the rest, to avoid inlining everything
 
 patches/%.o: patches/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<

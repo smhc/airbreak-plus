@@ -1,5 +1,11 @@
 # TODO
 
+// TODO: ASV IPS max-base-min schema
+// TODO: ips_drop as relative to IPS
+// TODO: Breath stage tracking independent of fvars, to allow modifying it
+// TODO: Turn ASV off after hyperpnea(120% vol), or long exhale(+1s ?)
+
+
 Breakpoint not_called_during_cycle_either, check what param_1 is 
 
 0x20010eac - param_1. IDK what lives here

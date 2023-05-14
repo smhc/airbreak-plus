@@ -49,6 +49,8 @@ int start(void) {
 	int pressure = vscale * fvars[1];    // Current pressure. fvars[2] also has pressure, but it's overscaled?
 	int command  = vscale * fvars[0x2a]; // Prescribed target
 
+	int error = vscale * (fvars[0x2a] - fvars[1]) * 3.0f; // Error 
+
 	if (pressure < 0) pressure = 0;
 	if (pressure > height) pressure = height;
 	if (command < 0) command = 0;
@@ -61,10 +63,15 @@ int start(void) {
 	#if DRAW_PRESSURE == 1
 		// If we're in S mode, draw its target EPAP and IPAP range
 		if (ivars[0x6f] == 4) {
-			GUI_SetColor(0x101010);
-			LCD_FillRect(pos_x, bottom - fvars[0xe] * vscale, pos_x + 8, bottom - fvars[0xf] * vscale);
+			if (fvars[0x20] <= 0.5f) { // Active inhale
+				GUI_SetColor(0x202020);
+			} else {
+				GUI_SetColor(0x101010);
+			}
+			LCD_FillRect(pos_x, bottom - fvars[0xe] * vscale, pos_x + 4, bottom - fvars[0xf] * vscale);
 			// LCD_DrawPixel(pos_x, bottom - fvars[0xf] * vscale);
 			// LCD_DrawPixel(pos_x, bottom - fvars[0xe] * vscale);
+
 		}
 
 		// draw 0, 5, 10, 15, 20 very faintly
@@ -75,12 +82,21 @@ int start(void) {
 		LCD_DrawPixel(pos_x, bottom - 15 * vscale);
 		LCD_DrawPixel(pos_x, bottom - 20 * vscale);
 
+		// draw amplified pressure error with respect to the commanded pressure
+		GUI_SetColor(0x000080);
+		if (error > 0) {
+			LCD_FillRect(pos_x, bottom - command, pos_x, bottom - command + error );
+		} else {
+			LCD_FillRect(pos_x, bottom - command + error, pos_x, bottom - command );
+		}
 
 		// draw the current commanded pressure faintly
 		GUI_SetColor(0x0000F0);
+		// GUI_SetColor(0x00FF00);
 		LCD_DrawPixel(pos_x, bottom - command);
 
-		// draw the current actual pressure in bright green
+
+		// // draw the current actual pressure in bright green
 		GUI_SetColor(0x00FF00);
 		LCD_DrawPixel(pos_x, bottom - pressure);
 	#endif

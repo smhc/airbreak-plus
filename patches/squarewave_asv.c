@@ -349,7 +349,7 @@ void MAIN start(int param_1) {
 
       float recent_flow = d->recent.targets[i] - d->recent.targets[i-1];
       float current_flow = d->current.targets[i] - d->current.targets[i-1];
-      float error_flow = current_flow / (recent_flow + 0.001f); // No need to divide by step length
+      float error_flow = current_flow / (recent_flow + 0.001f);
 
       // This way:  98-130% => 0 to -1;  95-50% => 0 to 1
       float ips_adjustment = map01c(error_volume, 0.95f, 0.5f) - map01c(error_volume, 0.98f, 1.3f);
@@ -386,6 +386,7 @@ void MAIN start(int param_1) {
         d->current.slope = d->current.ips / rise_time;
       #endif
     }
+    eps += (d->asv_target_epap - s_epap) * 0.2f; // 0.2cmH2O extra EPS for every 1cmH2O of EPAP
     ips = maxf(d->current.ips, s_ips);
     slope = maxf(d->current.slope, SLOPE_MIN);
     #if REDUCE_EPS_WHEN_ASV == 1

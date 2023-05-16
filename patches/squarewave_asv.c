@@ -133,7 +133,7 @@ typedef struct {
   float asv_target_slope;
   float asv_target_ips;
   float asv_target_epap;
-  float asv_target_epap_adjustment;
+  float asv_target_epap_target;
   int asv_disable;
 
   float target_ti;
@@ -160,7 +160,7 @@ INLINE void init_my_data(my_data_t *data) {
   data->asv_target_slope = 0.0f;
   data->asv_target_ips = 0.0f;
   data->asv_target_epap = 0.0f;
-  data->asv_target_epap_adjustment = 0.0f;
+  data->asv_target_epap_target = 0.0f;
   data->asv_disable = 0;
   data->target_ti = 1.0f;
   data->final_ips = 0.0f;
@@ -275,16 +275,20 @@ void MAIN start(int param_1) {
 
     d->target_ti = clamp(d->target_ti, 1.0f, 1.8f);
 
+    d->asv_target_epap_target = s_epap + map01c(d->current.ips, s_ips, s_ips + ASV_MAX_IPS) * ASV_MAX_EPAP;
+    if (d->asv_target_epap < s_epap) {
+      d->asv_target_epap = s_epap;
+    }
     d->asv_target_ips = 0.9f * d->current.ips + 0.1f * s_ips;
 
-    #if ASV_DISABLER == 1
+    if ((ASV_DISABLER == 1) && (d->dont_support == 0)) {
       // For every 10% volume excess above 120%, or for every 1s excess above recent average te, disable ASV for 1 breath(min 3, max 9), but at ==1 and ==2, do 50% and 25% ASV
       int te_excess = (int)(clamp(d->current.te - maxf(1.2f, d->recent.te), 0.0f, 6.0f));
       int vol_excess = (int)(clamp((d->current.volume_max / d->recent.volume_max - 1.1f) * 10.0f, 0.0f, 6.0f));
       d->asv_disable = d->asv_disable + te_excess + vol_excess - 1;
       if (d->asv_disable < 0) {d->asv_disable = 0; }
-      if (d->asv_disable > 8) {d->asv_disable = 8; }
-    #endif
+      if (d->asv_disable > 9) {d->asv_disable = 9; }
+    }
 
 
     d->ticks = 0;
@@ -341,37 +345,33 @@ void MAIN start(int param_1) {
 
     if ((d->ticks % ASV_STEP_LENGTH == 0) && i>=ASV_STEP_SKIP && i<ASV_STEP_COUNT) {
       d->current.targets[i] = d->current.volume;
+      // TODO: Switch to just using percentages, this is extremely confusing.
       float error_volume = (d->recent.targets[i] - d->current.volume) / (d->recent.targets[i] +0.001f);
 
       float recent_flow = d->recent.targets[i] - d->recent.targets[i-1];
       float current_flow = d->current.targets[i] - d->current.targets[i-1];
       float error_flow = (recent_flow - current_flow) / (recent_flow + 0.001f); // No need to divide by step length
 
-      // TODO: Target 90-95% of recent TV.
-      // TODO: use d->asv_target_ ips/slope as baseline, adjust from that.
+      // This way:  98-130% => 0 to -1;  95-50% => 0 to 1
+      float ips_adjustment = map01c(error_volume, 0.05f, 0.5f) - map01c(error_volume, 0.02f, -0.3f);
+      // if (i >= 5) {
+      //   // If the error is substantial enough, target higher than 95-98%, in 5% increments, to deliver as much as the body was expecting to get.
+      //   if (ips_adjustment > 0.15f) {
+      //     float target_shift = (int)(ips_adjustment / 0.15f) * 0.05f; // E.g. -15% = +5%, -30% = +10%, -45% = +15%
+      //     ips_adjustment = map01c(error_volume + target_shift, 0.05f, 0.5f) - map01c(error_volume + target_shift, 0.01f, -0.3f);
+      //   }
+      // }
+      float base_ips = maxf(d->asv_target_ips, s_ips);
+      if (ips_adjustment > 0.01f) {
+        d->current.ips = base_ips + ips_adjustment * ASV_GAIN;
+      } else if (ips_adjustment < -0.01f) {
+        d->current.ips = base_ips + ips_adjustment * (base_ips - s_ips);
+      } else {
+        d->current.ips = base_ips;
+      }
+      d->current.ips = clamp(d->current.ips, maxf(s_ips, *cmd_ps), s_ips + ASV_MAX_IPS);
+      d->current.slope = d->current.ips / rise_time;
 
-      // Map 95-50% volume to 0-1, base extra IPS on that.
-
-      // TODO: This
-      
-      #if 1 // Version with target IPS carry-over
-        // This way:  95-130% => 0 to -1;  95-50% => 0 to 1
-        float ips_adjustment = map01c(error_volume, 0.05f, 0.5f) - map01c(error_volume, 0.05f, -0.3f);
-        float base_ips = maxf(d->asv_target_ips, s_ips);
-        if (ips_adjustment > 0.01f) {
-          d->current.ips = base_ips + ips_adjustment * ASV_GAIN;
-        } else if (ips_adjustment < -0.01f) {
-          d->current.ips = base_ips + ips_adjustment * (base_ips - s_ips);
-        } else {
-          d->current.ips = base_ips;
-        }
-        d->current.ips = clamp(d->current.ips, maxf(s_ips, *cmd_ps), s_ips + ASV_MAX_IPS);
-        d->current.slope = d->current.ips / rise_time;
-      #else // Version without
-        float temp = map01c(error_flow, 0.05f, 0.4f);
-        float extra_ips = (map01c(error_volume, 0.05f, 0.5f) + temp*0.125f) * ASV_GAIN;
-        d->current.ips = clamp(s_ips + extra_ips, maxf(s_ips, *cmd_ps), s_ips + ASV_MAX_IPS);
-      #endif
       if (d->asv_disable == 1) {
         d->current.ips = (d->current.ips * 0.5f + s_ips * 0.5f);
       } else if (d->asv_disable == 2) {
@@ -420,6 +420,14 @@ void MAIN start(int param_1) {
     d->stage = S_EXHALE_LATE;
   }
   // */
+
+  if (d->asv_target_epap < d->asv_target_epap_target) {
+    d->asv_target_epap += 0.025f * delta; // 40s to change by 1cmH2O
+  } else {
+    d->asv_target_epap -= 0.0125f * delta; // 1m20s to drop by 1cmH2O
+  }
+  d->asv_target_epap = clamp(d->asv_target_epap, s_epap, s_epap + ASV_MAX_EPAP);
+  epap = d->asv_target_epap;
 
   // Set the commanded PS and EPAP values based on our target
   *cmd_epap = epap;
@@ -480,7 +488,7 @@ void MAIN start(int param_1) {
 
   // Safeguards against going cray cray
   *cmd_ps = clamp(*cmd_ps, -eps, s_ips + ASV_MAX_IPS);
-  *cmd_epap = clamp(*cmd_epap, s_epap - 1, s_epap + 1);
+  *cmd_epap = clamp(*cmd_epap, s_epap - 1, s_epap + ASV_MAX_EPAP);
   *cmd_ipap = *cmd_epap + *cmd_ps;
 
   // Necessary to keep graphing code called(I think based on PS change, who cares)

@@ -345,20 +345,19 @@ void MAIN start(int param_1) {
 
     if ((d->ticks % ASV_STEP_LENGTH == 0) && i>=ASV_STEP_SKIP && i<ASV_STEP_COUNT) {
       d->current.targets[i] = d->current.volume;
-      // TODO: Switch to just using percentages, this is extremely confusing.
-      float error_volume = (d->recent.targets[i] - d->current.volume) / (d->recent.targets[i] +0.001f);
+      float error_volume = d->current.targets[i] / (d->recent.targets[i] + 0.001f);
 
       float recent_flow = d->recent.targets[i] - d->recent.targets[i-1];
       float current_flow = d->current.targets[i] - d->current.targets[i-1];
-      float error_flow = (recent_flow - current_flow) / (recent_flow + 0.001f); // No need to divide by step length
+      float error_flow = current_flow / (recent_flow + 0.001f); // No need to divide by step length
 
       // This way:  98-130% => 0 to -1;  95-50% => 0 to 1
-      float ips_adjustment = map01c(error_volume, 0.05f, 0.5f) - map01c(error_volume, 0.02f, -0.3f);
+      float ips_adjustment = map01c(error_volume, 0.95f, 0.5f) - map01c(error_volume, 0.98f, 1.3f);
       // if (i >= 5) {
       //   // If the error is substantial enough, target higher than 95-98%, in 5% increments, to deliver as much as the body was expecting to get.
       //   if (ips_adjustment > 0.15f) {
       //     float target_shift = (int)(ips_adjustment / 0.15f) * 0.05f; // E.g. -15% = +5%, -30% = +10%, -45% = +15%
-      //     ips_adjustment = map01c(error_volume + target_shift, 0.05f, 0.5f) - map01c(error_volume + target_shift, 0.01f, -0.3f);
+      //     ips_adjustment = map01c(error_volume - target_shift, 0.05f, 0.5f) - map01c(error_volume - target_shift, 0.01f, -0.3f);
       //   }
       // }
       float base_ips = maxf(d->asv_target_ips, s_ips);

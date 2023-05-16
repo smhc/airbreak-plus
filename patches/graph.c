@@ -82,23 +82,31 @@ int start(void) {
 		LCD_DrawPixel(pos_x, bottom - 15 * vscale);
 		LCD_DrawPixel(pos_x, bottom - 20 * vscale);
 
-		// draw amplified pressure error with respect to the commanded pressure
-		GUI_SetColor(0x000080);
-		if (error > 0) {
-			LCD_FillRect(pos_x, bottom - command, pos_x, bottom - command + error );
-		} else {
-			LCD_FillRect(pos_x, bottom - command + error, pos_x, bottom - command );
-		}
-
-		// draw the current commanded pressure faintly
-		GUI_SetColor(0x0000F0);
-		// GUI_SetColor(0x00FF00);
-		LCD_DrawPixel(pos_x, bottom - command);
+		#if 0
+			// draw the current commanded pressure faintly
+			GUI_SetColor(0x0000F0);
+			// GUI_SetColor(0x00FF00);
+			LCD_DrawPixel(pos_x, bottom - command);
 
 
-		// // draw the current actual pressure in bright green
-		GUI_SetColor(0x00FF00);
-		LCD_DrawPixel(pos_x, bottom - pressure);
+			// // draw the current actual pressure in bright green
+			GUI_SetColor(0x00FF00);
+			LCD_DrawPixel(pos_x, bottom - pressure);
+		#else
+			// draw amplified pressure error with respect to the commanded pressure
+			GUI_SetColor(0x000080);
+			if (error > 0) {
+				LCD_FillRect(pos_x, bottom - command, pos_x, bottom - command + error );
+			} else {
+				LCD_FillRect(pos_x, bottom - command + error, pos_x, bottom - command );
+			}
+
+			// draw the current commanded pressure
+			GUI_SetColor(0x00FFF0);
+			LCD_DrawPixel(pos_x, bottom - command);
+		#endif
+
+
 	#endif
 
 	#if DRAW_FLOW == 1

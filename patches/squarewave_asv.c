@@ -10,14 +10,14 @@
 
 #define ASV 1
 #define ASV_SLOPE 0
-#define ASV_IPS 1
-#define ASV_EPAP 0
+
 #define ASV_DISABLER 1 // Disable ASV after hyperpneas and/or apneas (because all of mine are central, todo: differentiate the two)
+#define ASV_IPS_OVERSHOOT 0
+#define ASV_IPS_DYNAMIC_GAIN 0
 
 #define IPS_EARLY_DOWNSLOPE 0
 #define IPS_PARTIAL_EASYBREATHE 0
 
-#define EPS_ENABLE 1
 #define EPS_VOLUMEBASED 1
 const float EPS_FIXED_TIME = 1.1f; 
 
@@ -147,6 +147,8 @@ typedef struct {
 
   float target_ti;
 
+  float cycle_off_timer;
+
   float final_ips;
 
   #if COUNT_PRETRIGGER_FLOW == 1
@@ -154,7 +156,6 @@ typedef struct {
   #endif
 
   char stage;
-
 
   breath_t current;
   breath_t recent;
@@ -171,6 +172,8 @@ INLINE void init_my_data(my_data_t *data) {
   data->asv_target_epap = 0.0f;
   data->asv_target_epap_target = 0.0f;
 
+  data->cycle_off_timer = 0.0f;
+
   data->asv_target_adjustment = 0.0f;
   data->asv_disable = 0;
   data->target_ti = 1.0f;
@@ -182,7 +185,6 @@ INLINE void init_my_data(my_data_t *data) {
   init_breath(&data->current);
   init_breath(&data->recent);
 }
-
 
 const float ASV_INTERP = 0.025f; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
 INLINE void asv_interp_all(my_data_t* data) {
@@ -266,7 +268,6 @@ void MAIN start(int param_1) {
   float rise_time = 0.65f;       // (s)
   float fall_time = 0.65f;       // (s)
 
-
   float ips_drop = 0.35f * s_ips; // (cmH2O)
 
   float *cmd_ps = &fvars[0x29];
@@ -299,11 +300,12 @@ void MAIN start(int param_1) {
   } else if ((d->stage == S_INHALE) && (*cmd_ps >= ips*0.99f)) {
     d->stage = S_INHALE_LATE;
   } else if ((d->stage == S_INHALE) || (d->stage == S_INHALE_LATE)) {
-    // if (progress >= 0.5f) { d->stage = S_EXHALE; } // Stock cycle algorithm
-    // Respectively: Flow < 0, or flow < 15% if pressure is elevated(hint the patient is trying to cycle)
+    // Cycle off below 0 flow, or after 120ms past configured cycle sensitivity.
     if (flow < 0.0f) { d->stage = S_EXHALE; }
-    // if ((flow < d->current.inh_maxflow * 0.1f) && ((actual_pressure - *cmd_ipap) > 0.3f)) { d->stage = S_EXHALE; }
-    // if ((flow < d->current.inh_maxflow * 0.5f) && (d->current.ti > d->recent.ti * 1.2f)) { d->stage = S_EXHALE; }
+    if (progress > 0.5f) { 
+      d->cycle_off_timer += delta;
+      if (d->cycle_off_timer >= 0.115f) { d->stage = S_EXHALE; }
+    }
   } else if ((d->stage == S_EXHALE) && ((d->current.volume / d->current.volume_max) <= 0.1f)) {
     d->stage = S_EXHALE_LATE;
   }
@@ -326,7 +328,8 @@ void MAIN start(int param_1) {
 
     // 0-25% asvIPS -> go down; 25-100% asvIPS -> go up 
     float rel_ips = max(d->current.ips - s_ips, 0.0f) / ASV_MAX_IPS;
-    d->asv_target_epap_target = d->asv_target_epap + (map01c(rel_ips, 0.25f, 1.0f) - map01c(rel_ips, 0.25f, 0.0f)) * ASV_MAX_EPAP;
+    float rel_epap = max(d->asv_target_epap - s_epap, 0.0f) / ASV_MAX_EPAP;
+    d->asv_target_epap_target = d->asv_target_epap + (map01c(rel_ips, 0.25f, 1.0f) * (1.0f - rel_epap) - map01c(rel_ips, 0.25f, 0.0f) * rel_epap) * ASV_MAX_EPAP;
     d->asv_target_epap_target = clamp(d->asv_target_epap_target, s_epap, s_epap + ASV_MAX_EPAP);
     // d->asv_target_epap_target = s_epap + map01c(d->current.ips, s_ips, s_ips + ASV_MAX_IPS) * ASV_MAX_EPAP;
     d->asv_target_epap = max(d->asv_target_epap, s_epap);
@@ -346,6 +349,8 @@ void MAIN start(int param_1) {
     d->dont_support = ((d->current.volume / d->current.volume_max) > 0.20f) && (d->current.te <= d->recent.te * 0.50f);
 
     d->asv_target_adjustment = 0.0f;
+
+    d->cycle_off_timer = 0.0f;
 
     d->final_ips = 0.0f;
 
@@ -393,21 +398,27 @@ void MAIN start(int param_1) {
       float current_flow = d->current.targets[i] - d->current.targets[i-1];
       float error_flow = current_flow / (recent_flow + 0.001f);
 
-      if (i >= 5) {
-        // If the error is large enough, shift the target for current breath above 95-98%
-        // For now, let's keep this very tiny/weak
-        float adjustment = ((0.85f - error_volume) / 0.15f) * 0.025f;
-        d->asv_target_adjustment = max(d->asv_target_adjustment, adjustment);
-      }
+      #if ASV_IPS_OVERSHOOT == 1
+        if (i >= 5) {
+          // If the error is large enough, shift the target for current breath higher
+          float adjustment = ((0.85f - error_volume) / 0.15f) * 0.025f;
+          d->asv_target_adjustment = max(d->asv_target_adjustment, adjustment);
+        }
+      #endif
 
-      // This way:  98-130% => 0 to -1;  95-50% => 0 to 1
+      // This way:  95-130% => 0 to -1;  95-50% => 0 to 1
       float ev2 = error_volume - d->asv_target_adjustment;
-      float ips_adjustment = map01c(ev2, 0.95f, 0.5f) - map01c(ev2, 0.95f, 1.3f);
-      float base_ips = max(d->asv_target_ips, s_ips);
+      float ips_adjustment = map01c(ev2, 0.95f, 0.5f) - map01c(ev2, 0.98f, 1.3f);
+      #if ASV_IPS_DYNAMIC_GAIN == 1
+        float base_ips = max(d->current.ips, s_ips);
+      #else
+        float base_ips = max(d->asv_target_ips, s_ips);
+      #endif
+      // The 0.05f values ensure the adjustment is not super tiny.
       if (ips_adjustment > 0.01f) {
-        d->current.ips = base_ips + ips_adjustment * ASV_GAIN;
+        d->current.ips = base_ips + min(ips_adjustment + 0.05f, 1.0f) * ASV_GAIN;
       } else if (ips_adjustment < -0.01f) {
-        d->current.ips = base_ips + min(ips_adjustment - 0.09f, 1.0f) * (base_ips - s_ips);
+        d->current.ips = base_ips + min(ips_adjustment - 0.05f, 1.0f) * (base_ips - s_ips);
       } else {
         d->current.ips = base_ips;
       }
@@ -481,25 +492,23 @@ void MAIN start(int param_1) {
         float drop = map01c(flow / d->current.inh_maxflow, 0.7f, 0.1f) * ips_drop;
         float drop_max = ips_drop / 0.3f * delta; // Assume the fastest we want is reaching the drop in 300ms
         *cmd_ps = clamp(ips - drop, *cmd_ps - drop_max, *cmd_ps);
-      } 
+      } else {
+        *cmd_ps = ips;
+      }
     } else if (d->stage == S_EXHALE || d->stage == S_EXHALE_LATE) { // Exhale
       float t = d->current.te;
-      #if EPS_ENABLE == 1
-        #if EPS_VOLUMEBASED == 1
-          float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.05f, 0.6f);
-          eps_mult = min(eps_mult, map01c(t, EPS_FIXED_TIME, 0.4f));
-        #else
-          float eps_mult = 0.0f;
-          float t_midpoint = max(t * 0.65f, EPS_FIXED_TIME) / 2.0f;
-          float t_endpoint = max(t * 0.65f, EPS_FIXED_TIME);
-          if (t <= t_midpoint) {
-            eps_mult = map01(t, 0.0f, t_midpoint);
-          } else if (t <= t_endpoint ) {
-            eps_mult = map01(t, t_endpoint, t_midpoint);
-          }
-        #endif
+      #if EPS_VOLUMEBASED == 1
+        float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.05f, 0.6f);
+        eps_mult = min(eps_mult, map01c(t, EPS_FIXED_TIME, 0.4f));
       #else
-          float eps_mult = 0.0f;
+        float eps_mult = 0.0f;
+        float t_midpoint = max(t * 0.65f, EPS_FIXED_TIME) / 2.0f;
+        float t_endpoint = max(t * 0.65f, EPS_FIXED_TIME);
+        if (t <= t_midpoint) {
+          eps_mult = map01c(t, 0.0f, t_midpoint);
+        } else if (t <= t_endpoint ) {
+          eps_mult = map01c(t, t_endpoint, t_midpoint);
+        }
       #endif
 
       float a = map01c(t, fall_time, 0.0f); a = a * a * 0.95f;
@@ -514,6 +523,7 @@ void MAIN start(int param_1) {
   *cmd_ipap = *cmd_epap + *cmd_ps;
 
   // Necessary to keep graphing code called(I think based on PS change, who cares)
+  // const float jitter = 0.02f - 0.04f * (tim_read_tim5() & 1);
   const float jitter = 0.02f - 0.04f * (tim_read_tim5() & 1);
   *cmd_ps += jitter; *cmd_epap += jitter * 2; *cmd_ipap += jitter*2;
 

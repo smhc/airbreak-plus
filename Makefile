@@ -64,6 +64,7 @@ CFLAGS ?= \
 	-Wall \
 	-Wno-unused-result \
 	-Wno-unused-parameter \
+	-Wno-unused-variable \
 	-nostdlib \
 	-nostdinc \
 	-ffreestanding \

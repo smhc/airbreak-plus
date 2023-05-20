@@ -1,9 +1,35 @@
 # TODO
 
-// TODO: ASV IPS max-base-min schema
-// TODO: ips_drop as relative to IPS
-// TODO: Breath stage tracking independent of fvars, to allow modifying it
-// TODO: Turn ASV off after hyperpnea(120% vol), or long exhale(+1s ?)
+**MOST CRITICAL**:
+ - Re-scale EPAP adjustment
+ - [ ] FW.Cycle: After 50ms at <15% flow & >0.3cmH2O error
+
+**Next**:
+ - [ ] FW.Data - use `(fvars[0xC5] = epap, fvars[0xC4] = ipap` to report correct ipap
+ - Very aggressive flowbased IPS in presence of nontrivial volumebased deficit
+
+**Consider**:
+ - [ ] FW.IPS - repurpose EARLY_DOWNSLOPE to provide MORE pressure instead, easybreathe-style.
+ - [ ] FW.IPS - EARLY_DOWNSLOPE based on `d->recent.targets`
+ - [ ] FW.Upslope: IPS upslope of `max(fixed, flow_based)`, where flow_based
+ - Increase EPS as well as IPS during ASV
+ - "ASV start offset" - 
+
+**Maybe**:
+ - [ ] FW: ASV: Higher max IPS, dampen gain(0.5x above 2?)
+ - [ ] FW: Note down sources for the ASV algorithm table, A-FLEX shape, close browser 
+     - https://www.sciencedirect.com/science/article/abs/pii/S0012369215488385
+ - [ ] FW: Logic: Improve dont_support based on te, move ps slower
+ - [ ] FW: ASV: Target expected flow, adjust slope. PS after peak.
+ - [ ] FW: Technical: Test loss of precision from using `__fp16`
+ - [ ] FW: Technical: Individual section for each method, rename entry point to __start - [ ] 
+ - [ ] CONFIG: Watchpoint ivars+fvars and figure out rise time. Breakpoint param_1
+ - [ ] UX: Unpack binary, replace images. Replace rest of colors. Add red filter physically
+ - [ ] Visualization: Graph flow-volume relation as vertical moodbar
+ - [ ] Visualization: Use tcl writing into a pipe with Python to visualize ASV algo operation.
+
+**Rejected ideas**:
+ - IPS_PRETRIGGER_PRESSURE - 
 
 
 Breakpoint not_called_during_cycle_either, check what param_1 is 

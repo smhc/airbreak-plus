@@ -301,3 +301,7 @@ gui_fill_rect_set_colors:
 
   #A4B30F (164,179,15)  - shitty yellow, OR  #0FB3A4 - ocean blue
 Colors in 
+
+080dde38 writes fvars 0xe S_IPAP
+
+GUI_DispString - used to display the "Therapy" header, and others I presume

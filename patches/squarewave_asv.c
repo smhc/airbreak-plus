@@ -6,7 +6,7 @@
 
 #define COUNT_PRETRIGGER_FLOW 0 // Include pre-breath-start positive flow values into cumulative volume of current breath
                                 // (maybe important for early calculations, but I think it's likely to underestimate limitations in )
-#define REDUCE_EPS_WHEN_ASV 0 // Don't. It reduces effectiveness and increases expiratory intolerance, if any.
+#define REDUCE_EPS_WHEN_ASV 1 // Don't. It reduces effectiveness and increases expiratory intolerance, if any.
 
 #define ASV 1
 #define ASV_SLOPE 0
@@ -18,7 +18,6 @@
 #define IPS_EARLY_DOWNSLOPE 0
 #define IPS_PARTIAL_EASYBREATHE 0
 
-#define EPS_VOLUMEBASED 1
 const float EPS_FIXED_TIME = 1.1f; 
 
 // 20*5*10ms = 1s
@@ -27,8 +26,9 @@ const float EPS_FIXED_TIME = 1.1f;
 #define ASV_STEP_SKIP 1 // Amount of steps before first doing ASV adjustments. MUST be at least 1 or code will crash due to out of bounds target array read
 const float ASV_MAX_IPS = 2.0f;
 const float ASV_GAIN = 3.0f; // 4.0f seems fine but maybe a bit aggressive?
-const float ASV_MAX_EPAP = 1.0f;
-const float ASV_EPAP_EEPAP_ONLY = 0.5f;
+const float ASV_MAX_EPAP = 2.0f;
+const float ASV_EPAP_EEPAP_ONLY = 0.0f;
+const float ASV_EPAP_EXTRA_EPS = 0.2f; // How much extra EPS per EPAP
 
 
 const char S_UNINITIALIZED = 0;
@@ -286,6 +286,8 @@ void MAIN start(int param_1) {
     eps += a;
   }
 
+  eps += max(d->asv_target_epap - s_epap, 0.0f) * ASV_EPAP_EXTRA_EPS;
+
   float slope = ips / rise_time; // (cmH2O/s) Slope to meet IPS in rise_time milliseconds 
   float SLOPE_MIN = slope; // (cmH2O/s)
   float SLOPE_MAX = 10.0f; // (cmH2O/s)
@@ -300,11 +302,11 @@ void MAIN start(int param_1) {
   } else if ((d->stage == S_INHALE) && (*cmd_ps >= ips*0.99f)) {
     d->stage = S_INHALE_LATE;
   } else if ((d->stage == S_INHALE) || (d->stage == S_INHALE_LATE)) {
-    // Cycle off below 0 flow, or after 120ms past configured cycle sensitivity.
-    if (flow < 0.0f) { d->stage = S_EXHALE; }
+    // Cycle off below 0 flow, or after 150ms past configured cycle sensitivity.
+    if (flow < -0.0f * d->current.inh_maxflow) { d->stage = S_EXHALE; }
     if (progress > 0.5f) { 
       d->cycle_off_timer += delta;
-      if (d->cycle_off_timer >= 0.115f) { d->stage = S_EXHALE; }
+      if (d->cycle_off_timer >= 0.145f) { d->stage = S_EXHALE; }
     }
   } else if ((d->stage == S_EXHALE) && ((d->current.volume / d->current.volume_max) <= 0.1f)) {
     d->stage = S_EXHALE_LATE;
@@ -497,19 +499,8 @@ void MAIN start(int param_1) {
       }
     } else if (d->stage == S_EXHALE || d->stage == S_EXHALE_LATE) { // Exhale
       float t = d->current.te;
-      #if EPS_VOLUMEBASED == 1
-        float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.05f, 0.6f);
-        eps_mult = min(eps_mult, map01c(t, EPS_FIXED_TIME, 0.4f));
-      #else
-        float eps_mult = 0.0f;
-        float t_midpoint = max(t * 0.65f, EPS_FIXED_TIME) / 2.0f;
-        float t_endpoint = max(t * 0.65f, EPS_FIXED_TIME);
-        if (t <= t_midpoint) {
-          eps_mult = map01c(t, 0.0f, t_midpoint);
-        } else if (t <= t_endpoint ) {
-          eps_mult = map01c(t, t_endpoint, t_midpoint);
-        }
-      #endif
+      float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.05f, 0.6f);
+      eps_mult = min(eps_mult, map01c(t, EPS_FIXED_TIME, 0.4f));
 
       float a = map01c(t, fall_time, 0.0f); a = a * a * 0.95f;
       *cmd_ps = a * d->final_ips - (1.0f - a) * eps_mult * eps;
@@ -521,6 +512,8 @@ void MAIN start(int param_1) {
   *cmd_ps = clamp(*cmd_ps, -eps, s_ips + ASV_MAX_IPS);
   *cmd_epap = clamp(*cmd_epap, s_epap - 1, s_epap + ASV_MAX_EPAP);
   *cmd_ipap = *cmd_epap + *cmd_ps;
+
+  fvars[0xC4] = *cmd_ipap; // Hopefully this is reported IPAP and not something else that's gonna break everything
 
   // Necessary to keep graphing code called(I think based on PS change, who cares)
   // const float jitter = 0.02f - 0.04f * (tim_read_tim5() & 1);

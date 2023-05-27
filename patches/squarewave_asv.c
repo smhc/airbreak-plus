@@ -6,7 +6,7 @@
 
 #define COUNT_PRETRIGGER_FLOW 0 // Include pre-breath-start positive flow values into cumulative volume of current breath
                                 // (maybe important for early calculations, but I think it's likely to underestimate limitations in )
-#define REDUCE_EPS_WHEN_ASV 1 // Don't. It reduces effectiveness and increases expiratory intolerance, if any.
+const float EPS_REDUCE_WHEN_ASV = 0.5f; // % of extra IPS to reduce EPS by
 
 #define ASV 1
 #define ASV_SLOPE 0
@@ -15,18 +15,16 @@
 #define ASV_IPS_OVERSHOOT 0
 #define ASV_IPS_DYNAMIC_GAIN 0
 
-#define IPS_EARLY_DOWNSLOPE 0
-#define IPS_PARTIAL_EASYBREATHE 0
-
+const float EPS_FLOWBASED_DOWNSLOPE = 0.75f; // Maximum flowbased %
 const float EPS_FIXED_TIME = 1.1f; 
 
 // 20*5*10ms = 1s
-#define ASV_STEP_COUNT 15
+#define ASV_STEP_COUNT 20
 #define ASV_STEP_LENGTH 5
 #define ASV_STEP_SKIP 1 // Amount of steps before first doing ASV adjustments. MUST be at least 1 or code will crash due to out of bounds target array read
 const float ASV_MAX_IPS = 2.0f;
 const float ASV_GAIN = 3.0f; // 4.0f seems fine but maybe a bit aggressive?
-const float ASV_MAX_EPAP = 2.0f;
+const float ASV_MAX_EPAP = 0.0f;
 const float ASV_EPAP_EEPAP_ONLY = 0.0f;
 const float ASV_EPAP_EXTRA_EPS = 0.2f; // How much extra EPS per EPAP
 
@@ -44,6 +42,7 @@ int * const ivars = (void*) 0x2000e750;
 
 
 
+typedef unsigned int uint32;
 typedef signed short int16;
 typedef signed char int8;
 typedef __fp16 float16;
@@ -132,30 +131,28 @@ INLINE void init_breath(breath_t *breath) {
 
 typedef struct {
   float last_progress;
-  unsigned last_time;
-  unsigned breath_count;
-  int16 ticks; // Starts at 0, +1 each call
+  uint32 last_time;
+  uint32 breath_count;
 
-  int dont_support;
+  int16 ticks; // Starts at 0, +1 each call
+  int8 last_jitter;
+  int8 dont_support;
+  int8 asv_disable;
+  int8 stage;
+
   float asv_target_slope;
   float asv_target_ips;
   float asv_target_epap;
   float asv_target_epap_target;
-
   float asv_target_adjustment;
-  int asv_disable;
 
   float target_ti;
-
   float cycle_off_timer;
-
   float final_ips;
 
   #if COUNT_PRETRIGGER_FLOW == 1
     float pretrigger_flow[10]; // 10t=100ms 
   #endif
-
-  char stage;
 
   breath_t current;
   breath_t recent;
@@ -165,23 +162,27 @@ INLINE void init_my_data(my_data_t *data) {
   data->last_progress = 0.0f;
   data->last_time = tim_read_tim5();
   data->breath_count = 0;
+
   data->ticks = -1; // Uninitialized
+  data->last_jitter = 0;
   data->dont_support = 0;
+  data->asv_disable = 0;
+  data->stage = S_UNINITIALIZED;
+
   data->asv_target_slope = 0.0f;
   data->asv_target_ips = 0.0f;
   data->asv_target_epap = 0.0f;
   data->asv_target_epap_target = 0.0f;
-
-  data->cycle_off_timer = 0.0f;
-
   data->asv_target_adjustment = 0.0f;
-  data->asv_disable = 0;
+
   data->target_ti = 1.0f;
+  data->cycle_off_timer = 0.0f;
   data->final_ips = 0.0f;
+
   #if COUNT_PRETRIGGER_FLOW == 1
     for(int i=0; i<10; i++) { data->pretrigger_flow[i] = 0.0f; }
   #endif
-  data->stage = S_UNINITIALIZED;
+
   init_breath(&data->current);
   init_breath(&data->recent);
 }
@@ -246,10 +247,14 @@ INLINE float get_disabler_mult(int n) {
 }
 
 
-// asv_epap_min = fvars[0x11];
-// asv_epap_max = fvars[0x10];
-// asv_ips_min = fvars[0x14];
-// asv_ips_max = fvars[0x13];
+float *cmd_ps = &fvars[0x29];
+float *cmd_epap = &fvars[0x28];
+float *cmd_ipap = &fvars[0x2a]; // This is set to epap+ps elsewhere, and likely does nothing here
+
+INLINE void apply_jitter(int8 amt) {
+  float amtf = 0.01f * amt;
+  *cmd_ps += amtf; *cmd_epap += amtf; *cmd_ipap += amtf;
+}
 
 // This is where the real magic starts
 // The entry point. All other functions MUST be inline
@@ -265,16 +270,12 @@ void MAIN start(int param_1) {
   float epap = s_epap; // (cmH2O)
   float ips = s_ips;   // (cmH2O)
   float eps = s_eps;    // (cmH2O)
-  float rise_time = 0.65f;       // (s)
+  float rise_time = 0.70f;       // (s)
   float fall_time = 0.65f;       // (s)
 
-  float ips_drop = 0.35f * s_ips; // (cmH2O)
-
-  float *cmd_ps = &fvars[0x29];
-  float *cmd_epap = &fvars[0x28];
-  float *cmd_ipap = &fvars[0x2a]; // This is set to epap+ps elsewhere, and likely does nothing here
-
   my_data_t *d = get_data();
+
+  apply_jitter(-d->last_jitter); // Undo last jitter, to prevent small errors from it from accumulating.
 
   float delta = 0.010f; // It's 10+-0.01ms, basically constant
   const float flow = fvars[0x25]; // Leak-compensated patient flow
@@ -302,11 +303,11 @@ void MAIN start(int param_1) {
   } else if ((d->stage == S_INHALE) && (*cmd_ps >= ips*0.99f)) {
     d->stage = S_INHALE_LATE;
   } else if ((d->stage == S_INHALE) || (d->stage == S_INHALE_LATE)) {
-    // Cycle off below 0 flow, or after 150ms past configured cycle sensitivity.
-    if (flow < -0.0f * d->current.inh_maxflow) { d->stage = S_EXHALE; }
+    // Cycle off below 0 flow, or after 100ms past configured cycle sensitivity.
+    if (flow < -0.01f * d->current.inh_maxflow) { d->stage = S_EXHALE; }
     if (progress > 0.5f) { 
       d->cycle_off_timer += delta;
-      if (d->cycle_off_timer >= 0.145f) { d->stage = S_EXHALE; }
+      if (d->cycle_off_timer >= 0.95f) { d->stage = S_EXHALE; }
     }
   } else if ((d->stage == S_EXHALE) && ((d->current.volume / d->current.volume_max) <= 0.1f)) {
     d->stage = S_EXHALE_LATE;
@@ -330,10 +331,12 @@ void MAIN start(int param_1) {
 
     // 0-25% asvIPS -> go down; 25-100% asvIPS -> go up 
     float rel_ips = max(d->current.ips - s_ips, 0.0f) / ASV_MAX_IPS;
-    float rel_epap = max(d->asv_target_epap - s_epap, 0.0f) / ASV_MAX_EPAP;
-    d->asv_target_epap_target = d->asv_target_epap + (map01c(rel_ips, 0.25f, 1.0f) * (1.0f - rel_epap) - map01c(rel_ips, 0.25f, 0.0f) * rel_epap) * ASV_MAX_EPAP;
-    d->asv_target_epap_target = clamp(d->asv_target_epap_target, s_epap, s_epap + ASV_MAX_EPAP);
-    // d->asv_target_epap_target = s_epap + map01c(d->current.ips, s_ips, s_ips + ASV_MAX_IPS) * ASV_MAX_EPAP;
+    if (ASV_MAX_EPAP > 0.0f) {
+      float rel_epap = max(d->asv_target_epap - s_epap, 0.0f) / ASV_MAX_EPAP;
+      d->asv_target_epap_target = d->asv_target_epap + (map01c(rel_ips, 0.25f, 1.0f) * (1.0f - rel_epap) - map01c(rel_ips, 0.25f, 0.0f) * rel_epap) * ASV_MAX_EPAP;
+      d->asv_target_epap_target = clamp(d->asv_target_epap_target, s_epap, s_epap + ASV_MAX_EPAP);
+      // d->asv_target_epap_target = s_epap + map01c(d->current.ips, s_ips, s_ips + ASV_MAX_IPS) * ASV_MAX_EPAP;
+    }
     d->asv_target_epap = max(d->asv_target_epap, s_epap);
 
     d->asv_target_ips = 0.9f * d->current.ips + 0.1f * s_ips;
@@ -425,8 +428,6 @@ void MAIN start(int param_1) {
         d->current.ips = base_ips;
       }
       d->current.ips = clamp(d->current.ips, max(s_ips, *cmd_ps), s_ips + ASV_MAX_IPS);
-      d->current.slope = d->current.ips / rise_time;
-
       d->current.ips = s_ips + get_disabler_mult(d->asv_disable) * (d->current.ips - s_ips);
 
       #if ASV_SLOPE == 1
@@ -439,12 +440,12 @@ void MAIN start(int param_1) {
     // eps += (d->asv_target_epap - s_epap) * 0.2f; // 0.2cmH2O extra EPS for every 1cmH2O of EPAP
     ips = max(d->current.ips, s_ips);
     slope = max(d->current.slope, SLOPE_MIN);
-    #if REDUCE_EPS_WHEN_ASV == 1
+    if (EPS_REDUCE_WHEN_ASV > 0.0f) {
       // (don't- I think it just contributes to expiratory intolerance) Reduce EPS proportionally to extra IPS
       if (d->current.ips > s_ips) {
-         eps = max(0.0f, eps - (d->current.ips - s_ips)*0.5f );
+         eps = max(0.0f, eps - (d->current.ips - s_ips) * EPS_REDUCE_WHEN_ASV);
       }
-    #endif
+    }
   #endif
 
   // Allow myself to disable ASV during the night, if it disrupts my sleep after all
@@ -452,7 +453,6 @@ void MAIN start(int param_1) {
   if (((a >= 0.1f) && (a <= 0.3f)) || ((a >= 0.7f) && (a <= 0.9f))) {
     ips = s_ips;
     slope = SLOPE_MIN;
-    ips_drop = 0.0f;
     eps = 0.6f;
   }
 
@@ -471,39 +471,25 @@ void MAIN start(int param_1) {
   } else {
     if (d->stage == S_INHALE) {
       float t = d->current.ti;
-      float ips2 = 1.0f * IPS_PARTIAL_EASYBREATHE;
-      float slope2 = ips2 / (d->target_ti - 0.15f); // Time to reach ti-150ms. EasyBreathe does -200ms
-      if (ips - *cmd_ps - ips2 <= 0.4f) { slope *= 0.5f; }
-      if (ips - *cmd_ps - ips2 <= 0.2f) { slope *= 0.5f; }
-      if (ips - *cmd_ps - ips2 <= 0.0f) { slope  = 0.0f; }
+      if (ips - *cmd_ps <= 0.4f) { slope *= 0.5f; }
+      if (ips - *cmd_ps <= 0.2f) { slope *= 0.5f; }
+      if (ips - *cmd_ps <= 0.0f) { slope  = 0.0f; }
 
-      // Slows slope by ~66ms but compensates after, so net effect is zero.
-      if (t <= 0.050f) { slope *= 0.707f; }
-      if (t <= 0.100f) { slope *= 0.707f; }
-      if (t > 0.150f && t <= rise_time * 0.5f) { slope *= 1.377f; }
-
-      *cmd_ps = min(ips, *cmd_ps + (slope+slope2) * delta ); // Avoid mid-slope PS drops.
+      *cmd_ps = min(ips, *cmd_ps + slope * delta ); // Avoid mid-slope PS drops.
     } if (d->stage == S_INHALE_LATE) { 
       float t = d->current.ti;
-      // Try to trigger only when the breath is close to over and not during collapse.
-      if ((IPS_EARLY_DOWNSLOPE == 1)
-          && (t >= max(d->recent.ti * 0.7f, 0.8f))
-          && (d->current.volume >= d->recent.volume * 0.6f)
-          // && (flow <= d->current.inh_maxflow * 0.7f) 
-      ) {
-        float drop = map01c(flow / d->current.inh_maxflow, 0.7f, 0.1f) * ips_drop;
-        float drop_max = ips_drop / 0.3f * delta; // Assume the fastest we want is reaching the drop in 300ms
-        *cmd_ps = clamp(ips - drop, *cmd_ps - drop_max, *cmd_ps);
-      } else {
-        *cmd_ps = ips;
-      }
+      *cmd_ps = ips;
     } else if (d->stage == S_EXHALE || d->stage == S_EXHALE_LATE) { // Exhale
       float t = d->current.te;
       float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.05f, 0.6f);
       eps_mult = min(eps_mult, map01c(t, EPS_FIXED_TIME, 0.4f));
 
-      float a = map01c(t, fall_time, 0.0f); a = a * a * 0.95f;
-      *cmd_ps = a * d->final_ips - (1.0f - a) * eps_mult * eps;
+      float ips_mult = map01c(t, fall_time, 0.0f); ips_mult = ips_mult * ips_mult * 0.95f;
+      if (EPS_FLOWBASED_DOWNSLOPE > 0.0f) {
+        float temp = EPS_FLOWBASED_DOWNSLOPE;
+        ips_mult = min(ips_mult, ips_mult * (1.0f-temp) + temp * map01c(flow, -d->current.inh_maxflow * 0.9f, 0.0f) );
+      }
+      *cmd_ps = ips_mult * d->final_ips - (1.0f - ips_mult) * eps_mult * eps;
     }
   }
   d->last_progress = progress;
@@ -513,12 +499,8 @@ void MAIN start(int param_1) {
   *cmd_epap = clamp(*cmd_epap, s_epap - 1, s_epap + ASV_MAX_EPAP);
   *cmd_ipap = *cmd_epap + *cmd_ps;
 
-  fvars[0xC4] = *cmd_ipap; // Hopefully this is reported IPAP and not something else that's gonna break everything
-
   // Necessary to keep graphing code called(I think based on PS change, who cares)
-  // const float jitter = 0.02f - 0.04f * (tim_read_tim5() & 1);
-  const float jitter = 0.02f - 0.04f * (tim_read_tim5() & 1);
-  *cmd_ps += jitter; *cmd_epap += jitter * 2; *cmd_ipap += jitter*2;
-
+  d->last_jitter ^= 2 - (tim_read_tim5() & 4);
+  apply_jitter(d->last_jitter);
   return;
 }

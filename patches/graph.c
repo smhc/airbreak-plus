@@ -95,8 +95,8 @@ int start(void) {
 		#else
 			// draw amplified pressure error with respect to the commanded pressure
 			GUI_SetColor(0x000080);
-			if (fvars[0x2a] - fvars[1] < -0.3f) { GUI_SetColor(0x404040); }
-			if (fvars[0x2a] - fvars[1] < -0.6f) { GUI_SetColor(0xFFFFFF); }
+			// if (fvars[0x2a] - fvars[1] < -0.3f) { GUI_SetColor(0x0000BB); }
+			// if (fvars[0x2a] - fvars[1] < -0.6f) { GUI_SetColor(0x0060FF); }
 			if (error > 0) {
 				LCD_FillRect(pos_x, bottom - command, pos_x, bottom - command + error );
 			} else {

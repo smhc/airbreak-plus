@@ -2,6 +2,7 @@
  * This replaces the normal pressure gauge code in the ROM.
  */
 #include "stubs.h"
+#include "common_code.h"
 
 #define DRAW_PRESSURE 1
 #define DRAW_FLOW 0
@@ -9,12 +10,8 @@
 
 // Replaces `gui_fill_rect_set_colors`
 int start(void) {
-	// therapy manager variable dictionaries
-	float * const fvars	= (void*) 0x2000e948;
-	int * const ivars	= (void*) 0x2000e750;
-
 	// don't do anything if we are not in an active therapy mode
-	if (ivars[0x6f] == 0) return 0;
+	if (*therapy_mode == 0) return 0;
 
 	// break out of the current clipping so we can drawon the entire screen
 	unsigned * const color_ptr = (unsigned*)(gui_context + 60);
@@ -69,9 +66,6 @@ int start(void) {
 				GUI_SetColor(0x101010);
 			}
 			LCD_FillRect(pos_x, bottom - fvars[0xe] * vscale, pos_x + 4, bottom - fvars[0xf] * vscale);
-			// LCD_DrawPixel(pos_x, bottom - fvars[0xf] * vscale);
-			// LCD_DrawPixel(pos_x, bottom - fvars[0xe] * vscale);
-
 		}
 
 		// draw 0, 5, 10, 15, 20 very faintly
@@ -88,15 +82,12 @@ int start(void) {
 			// GUI_SetColor(0x00FF00);
 			LCD_DrawPixel(pos_x, bottom - command);
 
-
 			// // draw the current actual pressure in bright green
 			GUI_SetColor(0x00FF00);
 			LCD_DrawPixel(pos_x, bottom - pressure);
 		#else
 			// draw amplified pressure error with respect to the commanded pressure
 			GUI_SetColor(0x000080);
-			// if (fvars[0x2a] - fvars[1] < -0.3f) { GUI_SetColor(0x0000BB); }
-			// if (fvars[0x2a] - fvars[1] < -0.6f) { GUI_SetColor(0x0060FF); }
 			if (error > 0) {
 				LCD_FillRect(pos_x, bottom - command, pos_x, bottom - command + error );
 			} else {
@@ -107,7 +98,6 @@ int start(void) {
 			GUI_SetColor(0x00FFF0);
 			LCD_DrawPixel(pos_x, bottom - command);
 		#endif
-
 
 	#endif
 

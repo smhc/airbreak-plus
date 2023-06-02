@@ -219,7 +219,7 @@ patch_strings
 if [[ $PATCH_CODE == 1 ]] ; then
 	echo "Patching code"
 	patch_code_graph
-	if [[ $PATCH_TESTING == 1 ]] ; then
+	if [[ $PATCH_ASV == 1 ]] ; then
 		patch_code_squarewave_asv
 	else
 		patch_code_squarewave

@@ -1,4 +1,4 @@
-all: stm32-unlocked.bin stm32-patched.bin stm32-testing.bin
+all: stm32-unlocked.bin stm32-patched.bin stm32-asv.bin
 
 stm32-unlocked.bin: patch-airsense
 	./patch-airsense stm32.bin $@
@@ -6,8 +6,8 @@ stm32-unlocked.bin: patch-airsense
 stm32-patched.bin: patch-airsense patches/graph.bin patches/squarewave.bin
 	export PATCH_CODE=1 && ./patch-airsense stm32.bin $@
 
-stm32-testing.bin: patch-airsense patches/graph.bin patches/squarewave_asv.bin
-	export PATCH_CODE=1 && export PATCH_TESTING=1 && ./patch-airsense stm32.bin $@
+stm32-asv.bin: patch-airsense patches/graph.bin patches/squarewave_asv.bin
+	export PATCH_CODE=1 && export PATCH_ASV=1 && ./patch-airsense stm32.bin $@
 
 binaries: patches/ventilator.bin patches/graph.bin patches/squarewave.bin patches/squarewave_asv.bin
 

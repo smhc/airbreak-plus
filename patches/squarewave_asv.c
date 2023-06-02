@@ -1,8 +1,5 @@
 #include "stubs.h"
-
-#define INLINE inline __attribute__((always_inline))
-#define MAIN __attribute__((section(".text.0.main")))
-#define STATIC static __attribute__((section(".text.x.nonmain")))
+#include "common_code.h"
 
 #define COUNT_PRETRIGGER_FLOW 0 // Include pre-breath-start positive flow values into cumulative volume of current breath
                                 // (maybe important for early calculations, but I think it's likely to underestimate limitations in )
@@ -16,7 +13,12 @@ const float EPS_REDUCE_WHEN_ASV = 0.5f; // % of extra IPS to reduce EPS by
 #define ASV_IPS_DYNAMIC_GAIN 0
 
 const float EPS_FLOWBASED_DOWNSLOPE = 0.75f; // Maximum flowbased %
-const float EPS_FIXED_TIME = 1.1f; 
+const float EPS_FIXED_TIME = 1.1f;
+
+const   int FOT_PERIOD = 4*6; // In ticks, must be a multiple of 4 to save into EDF files correctly.
+const float FOT_MAGNITUDE = 0.2f;
+
+// int a = error_implement_fot();
 
 // 20*5*10ms = 1s
 #define ASV_STEP_COUNT 20
@@ -36,47 +38,6 @@ const char S_INHALE_LATE  = 3; // After peak flow has been reached
 const char S_EXHALE = 4; // Active exhale
 const char S_EXHALE_LATE  = 5; // Expiratory pause
 
-
-float * const fvars = (void*) 0x2000e948;
-int * const ivars = (void*) 0x2000e750;
-
-
-
-typedef unsigned int uint32;
-typedef signed short int16;
-typedef signed char int8;
-typedef __fp16 float16;
-
-/////// Utility functions ///////
-#define min(a,b) ({ \
-  __typeof__ (a) _a = (a); \
-  __typeof__ (b) _b = (b); \
-  _a < _b ? _a : _b; \
-})
-
-#define max(a,b) ({ \
-  __typeof__ (a) _a = (a); \
-  __typeof__ (b) _b = (b); \
-  _a > _b ? _a : _b; \
-})
-
-#define clamp(a, _min, _max) ({ \
-  __typeof__ (a) _a = (a); \
-  __typeof__ (_min) __min = (_min); \
-  __typeof__ (_max) __max = (_max); \
-  _a > __max ? __max : (_a < __min ? __min : a); \
-})
-
-INLINE float clamp01(float a) { return clamp(a, 0.0f, 1.0f); }
-
-INLINE float map01(float s, float start, float end) {
-   return (s - start)/(end-start);
-}
-
-// Version that clamps to 0-1
-INLINE float map01c(float s, float start, float end) {
-   return clamp( map01(s, start, end), 0.0f, 1.0f );
-}
 
 INLINE float interp(float from, float to, float coeff) {
    return from + (to - from) * coeff;
@@ -246,11 +207,6 @@ INLINE float get_disabler_mult(int n) {
   return 0.0f;
 }
 
-
-float *cmd_ps = &fvars[0x29];
-float *cmd_epap = &fvars[0x28];
-float *cmd_ipap = &fvars[0x2a]; // This is set to epap+ps elsewhere, and likely does nothing here
-
 INLINE void apply_jitter(int8 amt) {
   float amtf = 0.01f * amt;
   *cmd_ps += amtf; *cmd_epap += amtf; *cmd_ipap += amtf;
@@ -265,8 +221,6 @@ void MAIN start(int param_1) {
   float s_eps = 0.6f;
   float s_ips = s_ipap - s_epap;
 
-  const float actual_pressure = fvars[1]; // Actual current pressure in the circuit
-
   float epap = s_epap; // (cmH2O)
   float ips = s_ips;   // (cmH2O)
   float eps = s_eps;    // (cmH2O)
@@ -278,7 +232,7 @@ void MAIN start(int param_1) {
   apply_jitter(-d->last_jitter); // Undo last jitter, to prevent small errors from it from accumulating.
 
   float delta = 0.010f; // It's 10+-0.01ms, basically constant
-  const float flow = fvars[0x25]; // Leak-compensated patient flow
+  const float flow = *flow_compensated;
 
   if (ASV_EPAP_EEPAP_ONLY > 0.0f) {
     float a = max(d->asv_target_epap - s_epap, 0.0f) * ASV_EPAP_EEPAP_ONLY;
@@ -292,7 +246,6 @@ void MAIN start(int param_1) {
   float slope = ips / rise_time; // (cmH2O/s) Slope to meet IPS in rise_time milliseconds 
   float SLOPE_MIN = slope; // (cmH2O/s)
   float SLOPE_MAX = 10.0f; // (cmH2O/s)
-  float SLOPE_EPAP = 0.5f; // (cmH2O/s)
 
   ips   = max(d->current.ips, s_ips);
   slope = max(d->current.slope, SLOPE_MIN);

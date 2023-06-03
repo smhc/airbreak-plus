@@ -44,6 +44,11 @@ const   int *pap_timer = &ivars[0];
 // b9, be might be TV, ba, bb might be MV 
 
 
+// const float *asv_epap_min = &fvars[0x11];
+// const float *asv_epap_max = &fvars[0x10];
+// const float *asv_ips_min  = &fvars[0x14];
+// const float *asv_ips_max  = &fvars[0x13];
+
 // Utility functions
 #define min(a,b) ({ \
   __typeof__ (a) _a = (a); \

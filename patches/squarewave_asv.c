@@ -1,9 +1,12 @@
 #include "stubs.h"
 #include "common_code.h"
 
+#define HISTORY_LENGTH 15
 #define COUNT_PRETRIGGER_FLOW 0 // Include pre-breath-start positive flow values into cumulative volume of current breath
                                 // (maybe important for early calculations, but I think it's likely to underestimate limitations in )
-const float EPS_REDUCE_WHEN_ASV = 0.5f; // % of extra IPS to reduce EPS by
+
+#define CUSTOM_CYCLE 1
+#define JITTER 1
 
 #define ASV 1
 #define ASV_SLOPE 0
@@ -14,9 +17,10 @@ const float EPS_REDUCE_WHEN_ASV = 0.5f; // % of extra IPS to reduce EPS by
 
 const float EPS_FLOWBASED_DOWNSLOPE = 0.75f; // Maximum flowbased %
 const float EPS_FIXED_TIME = 1.1f;
+const float EPS_REDUCE_WHEN_ASV = 0.5f; // % of extra IPS to reduce EPS by
 
-const   int FOT_PERIOD = 4*6; // In ticks, must be a multiple of 4 to save into EDF files correctly.
-const float FOT_MAGNITUDE = 0.2f;
+const   int FOT_HALF_WAVELENGTH = 3*4; // In ticks, must be a multiple of 4 to save into EDF files correctly.
+const float FOT_AMPLITUDE = 0.2f;
 
 // int a = error_implement_fot();
 
@@ -52,11 +56,6 @@ INLINE float interpmin(float from, float to, float coeff, float min_speed) {
    }
 }
 
-INLINE void interp_inplace(float *value, float towards, float coeff) {
-  *value = interp(*value, towards, coeff);
-}
-
-
 // Setup storage for important data
 typedef struct {
   float volume;
@@ -91,6 +90,16 @@ INLINE void init_breath(breath_t *breath) {
 }
 
 typedef struct {
+  float16 flow[HISTORY_LENGTH];
+} history_t;
+
+INLINE void init_history(history_t *hist) {
+  for(int i=0; i<HISTORY_LENGTH; i++) { 
+    hist->flow[i] = 0.0f; 
+  }
+}
+
+typedef struct {
   float last_progress;
   uint32 last_time;
   uint32 breath_count;
@@ -105,18 +114,14 @@ typedef struct {
   float asv_target_ips;
   float asv_target_epap;
   float asv_target_epap_target;
-  float asv_target_adjustment;
 
-  float target_ti;
   float cycle_off_timer;
   float final_ips;
 
-  #if COUNT_PRETRIGGER_FLOW == 1
-    float pretrigger_flow[10]; // 10t=100ms 
-  #endif
-
   breath_t current;
   breath_t recent;
+
+  history_t history;
 } my_data_t;
 
 INLINE void init_my_data(my_data_t *data) {
@@ -134,18 +139,14 @@ INLINE void init_my_data(my_data_t *data) {
   data->asv_target_ips = 0.0f;
   data->asv_target_epap = 0.0f;
   data->asv_target_epap_target = 0.0f;
-  data->asv_target_adjustment = 0.0f;
 
-  data->target_ti = 1.0f;
   data->cycle_off_timer = 0.0f;
   data->final_ips = 0.0f;
 
-  #if COUNT_PRETRIGGER_FLOW == 1
-    for(int i=0; i<10; i++) { data->pretrigger_flow[i] = 0.0f; }
-  #endif
-
   init_breath(&data->current);
   init_breath(&data->recent);
+
+  init_history(&data->history);
 }
 
 const float ASV_INTERP = 0.025f; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
@@ -162,18 +163,18 @@ INLINE void asv_interp_all(my_data_t* data) {
   for(int i=0; i<ASV_STEP_COUNT; i++) {
     // If it has zero volume, it means the breath was past its peak already, ignore it.
     if (current->targets[i] > 0.0f) {
-      interp_inplace(&recent->targets[i], current->targets[i], coeff_v);
+      inplace(interp, &recent->targets[i], current->targets[i], coeff_v);
     }
     current->targets[i] = 0.0f;
   }
-  interp_inplace(&recent->ips, current->ips, 0.5f);
-  interp_inplace(&recent->slope, current->slope, 0.5f);
-  interp_inplace(&recent->volume_max, current->volume_max, coeff_v);
-  interp_inplace(&recent->duration, current->duration, coeff);
-  interp_inplace(&recent->exh_maxflow, current->exh_maxflow, coeff);
-  interp_inplace(&recent->inh_maxflow, current->inh_maxflow, coeff);
-  interp_inplace(&recent->ti, current->ti, coeff);
-  interp_inplace(&recent->te, current->te, coeff);
+  inplace(interp, &recent->ips, current->ips, 0.5f);
+  inplace(interp, &recent->slope, current->slope, 0.5f);
+  inplace(interp, &recent->volume_max, current->volume_max, coeff_v);
+  inplace(interp, &recent->duration, current->duration, coeff);
+  inplace(interp, &recent->exh_maxflow, current->exh_maxflow, coeff);
+  inplace(interp, &recent->inh_maxflow, current->inh_maxflow, coeff);
+  inplace(interp, &recent->ti, current->ti, coeff);
+  inplace(interp, &recent->te, current->te, coeff);
 }
 
 
@@ -208,7 +209,7 @@ INLINE float get_disabler_mult(int n) {
 }
 
 INLINE void apply_jitter(int8 amt) {
-  float amtf = 0.01f * amt;
+  float amtf = 0.005f * amt;
   *cmd_ps += amtf; *cmd_epap += amtf; *cmd_ipap += amtf;
 }
 
@@ -216,23 +217,33 @@ INLINE void apply_jitter(int8 amt) {
 // The entry point. All other functions MUST be inline
 void MAIN start(int param_1) {
   const float progress = fvars[0x20]; // Inhale(1.6s to 0.5), Exhale(4.5s from 0.5 to 1.0). Seems breath-duration-dependent. Only in S mode
-  float s_ipap = fvars[0xe];
-  float s_epap = fvars[0xf];
-  float s_eps = 0.6f;
-  float s_ips = s_ipap - s_epap;
+  const float s_ipap = fvars[0xe];
+  const float s_epap = fvars[0xf];
+  const float s_eps = 0.6f;
+  float s_ips = s_ipap - s_epap; // FIXME: This should be const(but I'm doing a lazy hack).
 
   float epap = s_epap; // (cmH2O)
   float ips = s_ips;   // (cmH2O)
   float eps = s_eps;    // (cmH2O)
-  float rise_time = 0.70f;       // (s)
+  float rise_time = 0.65f;       // (s)
   float fall_time = 0.65f;       // (s)
+
+  int8 toggle = 0;
+
+  // Binary toggle if IPAP ends in 0.2 or 0.8
+  float a = (s_ipap - (int)s_ipap);
+  if (((a >= 0.1f) && (a <= 0.3f)) || ((a >= 0.7f) && (a <= 0.9f))) {
+    toggle = 1;
+  }
 
   my_data_t *d = get_data();
 
-  apply_jitter(-d->last_jitter); // Undo last jitter, to prevent small errors from it from accumulating.
+  #if JITTER == 1
+    apply_jitter(-d->last_jitter); // Undo last jitter, to prevent small errors from it from accumulating.
+  #endif
 
   float delta = 0.010f; // It's 10+-0.01ms, basically constant
-  const float flow = *flow_compensated;
+  const float flow = *flow_compensated / 60.0f; // (L/s)
 
   if (ASV_EPAP_EEPAP_ONLY > 0.0f) {
     float a = max(d->asv_target_epap - s_epap, 0.0f) * ASV_EPAP_EEPAP_ONLY;
@@ -256,12 +267,16 @@ void MAIN start(int param_1) {
   } else if ((d->stage == S_INHALE) && (*cmd_ps >= ips*0.99f)) {
     d->stage = S_INHALE_LATE;
   } else if ((d->stage == S_INHALE) || (d->stage == S_INHALE_LATE)) {
-    // Cycle off below 0 flow, or after 100ms past configured cycle sensitivity.
-    if (flow < -0.01f * d->current.inh_maxflow) { d->stage = S_EXHALE; }
-    if (progress > 0.5f) { 
-      d->cycle_off_timer += delta;
-      if (d->cycle_off_timer >= 0.95f) { d->stage = S_EXHALE; }
-    }
+    #if CUSTOM_CYCLE == 1
+      // Cycle off below 0 flow, or after 100ms past configured cycle sensitivity.
+      if (flow < -0.01f * d->current.inh_maxflow) { d->stage = S_EXHALE; }
+      if (progress > 0.5f) { 
+        d->cycle_off_timer += delta;
+        if (d->cycle_off_timer >= 0.95f) { d->stage = S_EXHALE; }
+      }
+    #else
+      if (progress > 0.5f) { d->stage = S_EXHALE; }
+    #endif
   } else if ((d->stage == S_EXHALE) && ((d->current.volume / d->current.volume_max) <= 0.1f)) {
     d->stage = S_EXHALE_LATE;
   }
@@ -273,14 +288,6 @@ void MAIN start(int param_1) {
     if ((d->current.te > d->recent.te * 0.60f) && (d->ticks != -1) && (d->dont_support == 0) ) {
         asv_interp_all(d);
     }}
-
-    if ((d->current.ti > d->target_ti - 0.4f)
-     && (d->current.ti < d->target_ti + 0.4f)) {
-      d->target_ti = d->current.ti;
-    } else {
-      interp_inplace(&d->target_ti, d->current.ti, 0.3f);
-    }
-    d->target_ti = clamp(d->target_ti, 1.0f, 1.8f);
 
     // 0-25% asvIPS -> go down; 25-100% asvIPS -> go up 
     float rel_ips = max(d->current.ips - s_ips, 0.0f) / ASV_MAX_IPS;
@@ -297,28 +304,28 @@ void MAIN start(int param_1) {
     if ((ASV_DISABLER == 1) && (d->dont_support == 0)) {
       // For every 10% volume excess above 120%, or for every 1s excess above recent average te, disable ASV for 1 breath, for up to 6 at once
       int te_excess = (int)(clamp(d->current.te - max(1.8f, d->recent.te), 0.0f, 6.0f));
-      int vol_excess = (int)(clamp((d->current.volume_max / d->recent.volume_max - 1.1f - d->asv_target_adjustment) * 10.0f, 0.0f, 6.0f));
+      int vol_excess = (int)(clamp((d->current.volume_max / d->recent.volume_max - 1.1f) * 10.0f, 0.0f, 6.0f));
       d->asv_disable = d->asv_disable + te_excess + vol_excess - 1; // Reduce by 1 per breath
       d->asv_disable = clamp(d->asv_disable, -2, 9);
     }
 
     d->ticks = 0;
     d->breath_count += 1;
-    d->dont_support = ((d->current.volume / d->current.volume_max) > 0.20f) && (d->current.te <= d->recent.te * 0.50f);
-
-    d->asv_target_adjustment = 0.0f;
+    d->dont_support = ((d->current.volume / d->current.volume_max) > 0.20f) && (d->current.te <= 1.2f);
 
     d->cycle_off_timer = 0.0f;
 
     d->final_ips = 0.0f;
 
-    #if (ASV == 1) && (COUNT_PRETRIGGER_FLOW == 1)
-      for(int i=0; i<10; i++) { 
-        if (d->pretrigger_flow[i] > 0.0f) {
-          d->current.volume += d->pretrigger_flow[i];
+    #if (COUNT_PRETRIGGER_FLOW == 1)
+      float recent_volume = 0.0f;
+      for(int i=0; i<HISTORY_LENGTH; i++) {
+        if (d->history.flow[i] > 0.0f) {
+          recent_volume += d->history.flow[i] * delta;
         }
-        d->pretrigger_flow[i] = 0.0f; 
+        d->history.flow[i] = 0.0f; 
       }
+      d->current.volume = recent_volume;
     #endif
     init_breath(&d->current);
     d->current.ips = max(d->asv_target_ips, s_ips);
@@ -328,12 +335,12 @@ void MAIN start(int param_1) {
   }
   #if COUNT_PRETRIGGER_FLOW == 1
     if (d->ticks != -1) {
-      d->pretrigger_flow[d->ticks % 10] = flow;
+      d->history.flow[d->ticks % 10] = flow;
     }
   #endif
 
   // Keep track of ongoing values
-  d->current.volume += flow;
+  d->current.volume += flow * delta;
   d->current.volume_max = max(d->current.volume_max, d->current.volume);
   d->current.duration += delta;
   d->current.exh_maxflow = min(d->current.exh_maxflow, flow); 
@@ -356,17 +363,8 @@ void MAIN start(int param_1) {
       float current_flow = d->current.targets[i] - d->current.targets[i-1];
       float error_flow = current_flow / (recent_flow + 0.001f);
 
-      #if ASV_IPS_OVERSHOOT == 1
-        if (i >= 5) {
-          // If the error is large enough, shift the target for current breath higher
-          float adjustment = ((0.85f - error_volume) / 0.15f) * 0.025f;
-          d->asv_target_adjustment = max(d->asv_target_adjustment, adjustment);
-        }
-      #endif
-
       // This way:  95-130% => 0 to -1;  95-50% => 0 to 1
-      float ev2 = error_volume - d->asv_target_adjustment;
-      float ips_adjustment = map01c(ev2, 0.95f, 0.5f) - map01c(ev2, 0.98f, 1.3f);
+      float ips_adjustment = map01c(error_volume, 0.95f, 0.5f) - map01c(error_volume, 0.98f, 1.3f);
       #if ASV_IPS_DYNAMIC_GAIN == 1
         float base_ips = max(d->current.ips, s_ips);
       #else
@@ -401,9 +399,7 @@ void MAIN start(int param_1) {
     }
   #endif
 
-  // Allow myself to disable ASV during the night, if it disrupts my sleep after all
-  float a = (s_ipap - (int)s_ipap);
-  if (((a >= 0.1f) && (a <= 0.3f)) || ((a >= 0.7f) && (a <= 0.9f))) {
+  if (toggle) {
     ips = s_ips;
     slope = SLOPE_MIN;
     eps = 0.6f;
@@ -452,8 +448,11 @@ void MAIN start(int param_1) {
   *cmd_epap = clamp(*cmd_epap, s_epap - 1, s_epap + ASV_MAX_EPAP);
   *cmd_ipap = *cmd_epap + *cmd_ps;
 
-  // Necessary to keep graphing code called(I think based on PS change, who cares)
-  d->last_jitter ^= 2 - (tim_read_tim5() & 4);
-  apply_jitter(d->last_jitter);
+  #if JITTER == 1
+    // Necessary to keep graphing code called(I think based on PS change, who cares)
+    d->last_jitter ^= 2 - (tim_read_tim5() & 4);
+    apply_jitter(d->last_jitter);
+  #endif
+
   return;
 }

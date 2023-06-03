@@ -5,14 +5,13 @@
 #define COUNT_PRETRIGGER_FLOW 1 // Include pre-breath-start positive flow values into cumulative volume of current breath
                                 // (maybe important for early calculations, but I think it's likely to underestimate limitations in )
 
-#define CUSTOM_CYCLE 0
-
+#define CUSTOM_CYCLE 1
 #define JITTER 0
 
 const float EPS_FLOWBASED_DOWNSLOPE = 0.6f; // Maximum flowbased %
 const float EPS_FIXED_TIME = 1.1f;
 
-const   int FOT_HALF_WAVELENGTH = 4*4; // In ticks, must be a multiple of 4 to save into EDF files correctly.
+const   int FOT_HALF_WAVELENGTH = 3*4; // In ticks, must be a multiple of 4 to save into EDF files correctly.
 const float FOT_AMPLITUDE = 0.2f;
 
 // int a = error_implement_fot();
@@ -208,7 +207,9 @@ void MAIN start(int param_1) {
   // Gradually ramp the assist scale up from 40% to 100%
   assist_scale = min(0.4f + max((int)d->breath_count - 2, 0) * 0.1f, 1.0f);
 
-  if ((d->ticks % (FOT_HALF_WAVELENGTH*2)) < FOT_HALF_WAVELENGTH) {
+  const int fhw = FOT_HALF_WAVELENGTH;
+  if (((*pap_timer * 10) % (fhw*2)) < fhw) {
+    // ((float)(d->ticks % fhw) / (float)fhw) 
     fot = FOT_AMPLITUDE;
   } else {
     fot = -FOT_AMPLITUDE;
@@ -220,8 +221,8 @@ void MAIN start(int param_1) {
   } else if ((d->stage == S_INHALE) && (*cmd_ps >= ips*0.99f)) {
     d->stage = S_INHALE_LATE;
   } else if ((d->stage == S_INHALE) || (d->stage == S_INHALE_LATE)) {
-    // Cycle off below 0 flow, or after 100ms past configured cycle sensitivity.
     #if CUSTOM_CYCLE == 1
+      // Cycle off below 0 flow, or after 100ms past configured cycle sensitivity.
       if (flow < -0.01f * d->current.inh_maxflow) { d->stage = S_EXHALE; }
       if (progress > 0.5f) { 
         d->cycle_off_timer += delta;
@@ -251,14 +252,14 @@ void MAIN start(int param_1) {
     d->final_ips = 0.0f;
 
     #if (COUNT_PRETRIGGER_FLOW == 1)
+      float recent_volume = 0.0f;
       for(int i=0; i<HISTORY_LENGTH; i++) {
-        float recent_volume = 0.0f;
         if (d->history.flow[i] > 0.0f) {
           recent_volume += d->history.flow[i] * delta;
         }
-        d->current.volume = recent_volume;
         d->history.flow[i] = 0.0f; 
       }
+      d->current.volume = recent_volume;
     #endif
     init_breath(&d->current);
   } else {
@@ -290,9 +291,9 @@ void MAIN start(int param_1) {
   } else {
 
     float IMOD = s_ips / 4.0f;
-    float IPS_FIX = 0.7f * IMOD;
-    float IPS_FLO = 2.6f * IMOD; // Expect under half of it 
-    float IPS_VOL = 4.4f * IMOD; // Expect half of it
+    float IPS_FIX = 1.2f * IMOD;
+    float IPS_FLO = 2.0f * IMOD; // Expect under half of it 
+    float IPS_VOL = 5.2f * IMOD; // Expect half of it
 
     if (d->stage == S_INHALE || d->stage == S_INHALE_LATE) {
       float t = d->current.ti;

@@ -19,18 +19,29 @@ typedef __fp16 float16;
 float * const fvars = (void*) 0x2000e948;
 int * const ivars = (void*) 0x2000e750;
 
-float *cmd_ps = &fvars[0x29];
-float *cmd_epap = &fvars[0x28];
-float *cmd_ipap = &fvars[0x2a]; // This is set to epap+ps somewhere else, no point in writing directly to it
+float *cmd_ps = &fvars[0x29]; // (cmH2O)
+float *cmd_epap = &fvars[0x28]; // (cmH2O)
+float *cmd_ipap = &fvars[0x2a]; // (cmH2O) This is set to epap+ps somewhere else, no point in writing directly to it
 
-const float *flow_raw = &fvars[0x3];
-const float *flow_patient = &fvars[0x0];
-const float *flow_compensated = &fvars[0x25];
+const float *leak_basal = &fvars[0x22]; // I believe this to be basal unintentional leak (L/min)
+const float *leak = &fvars[0x24]; // Unintentional leak (L/min) - this is what flow_compensated incorporates
+// const float *leak_b = &fvars[0x23]; // Also unintentional leak, but smaller amplitude, unsure of significance
+
+const float *flow_raw = &fvars[0x3]; // (L/min)
+const float *flow_patient = &fvars[0x0]; // (L/min)
+const float *flow_compensated = &fvars[0x25]; // (L/min)
 // const float *flow_delayed = &fvars[0x26]; // Slightly delayed 0x25 ?
 
-const float *actual_pressure = &fvars[1]; // Actual current pressure in the circuit
+const float *actual_pressure = &fvars[1]; // (cmH2O) Actual current pressure in the circuit
 const   int *therapy_mode = &ivars[0x6f]; // It's 0 when device is inactive
 const   int *pap_timer = &ivars[0];
+
+// I believe these are the reported EPAP and IPAP written to EDF files.
+// However, they're probably written somewhere else(before end of inspiration), which needs to be debugged to write them
+// Or used to figure out how to add extra signals..?
+// float *report_epap = &fvars[0xC5];
+// float *report_ipap = &fvars[0xC4];
+// b9, be might be TV, ba, bb might be MV 
 
 
 // Utility functions
@@ -63,5 +74,13 @@ INLINE float map01(float s, float start, float end) {
 INLINE float map01c(float s, float start, float end) {
    return clamp( map01(s, start, end), 0.0f, 1.0f );
 }
+
+
+// Usage example: `inplace(max, &a, b)`
+#define inplace(fn, ptr, args...) ({ \
+  __typeof__ (ptr) _ptr = (ptr); \
+  *_ptr = fn(*_ptr, args); \
+})
+
 
 #endif

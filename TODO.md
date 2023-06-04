@@ -28,12 +28,6 @@ Breakpoint not_called_during_cycle_either, check what param_1 is
 
 # Useful notes
 
-
-// asv_epap_min = fvars[0x11];
-// asv_epap_max = fvars[0x10];
-// asv_ips_min = fvars[0x14];
-// asv_ips_max = fvars[0x13];
-
 `watch *0x2000e956`
 On therapy start: `DMA_SetCurrDataCounter(addr, value)` - This sets 0xE fvar
 

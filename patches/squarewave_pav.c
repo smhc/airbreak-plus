@@ -267,7 +267,7 @@ void MAIN start(int param_1) {
   }
   #if COUNT_PRETRIGGER_FLOW == 1
     if (d->ticks != -1) {
-      d->history.flow[d->ticks % 10] = flow;
+      d->history.flow[d->ticks % HISTORY_LENGTH] = flow;
     }
   #endif
 

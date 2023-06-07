@@ -15,7 +15,7 @@
 #define ASV_IPS_OVERSHOOT 0
 #define ASV_DYNAMIC_GAIN 0
 
-const float IPS_EARLY_DOWNSLOPE = 0.25f; // %
+const float IPS_EARLY_DOWNSLOPE = 0.0f; // %
 
 const float EPS_FLOWBASED_DOWNSLOPE = 0.75f; // Maximum flowbased %
 const float EPS_FIXED_TIME = 1.1f;
@@ -33,7 +33,6 @@ const float FOT_AMPLITUDE = 0.2f;
 const float ASV_MAX_IPS = 2.0f;
 const float ASV_GAIN = 3.0f; // 4.0f seems fine but maybe a bit aggressive?
 const float ASV_MAX_EPAP = 1.0f;
-const float ASV_EPAP_EEPAP_ONLY = 0.0f;
 const float ASV_EPAP_EXTRA_EPS = 0.2f; // How much extra EPS per EPAP
 
 
@@ -45,11 +44,11 @@ const char S_EXHALE = 4; // Active exhale
 const char S_EXHALE_LATE  = 5; // Expiratory pause
 
 
-INLINE float interp(float from, float to, float coeff) {
+STATIC float interp(float from, float to, float coeff) {
    return from + (to - from) * coeff;
 }
 
-INLINE float interpmin(float from, float to, float coeff, float min_speed) {
+STATIC float interpmin(float from, float to, float coeff, float min_speed) {
    float rate = (to - from) * coeff;
    if (rate >= 0.0f) {
      return from + clamp(rate, min_speed, to-from);
@@ -76,7 +75,7 @@ typedef struct {
   float targets[ASV_STEP_COUNT];
 } breath_t;
 
-INLINE void init_breath(breath_t *breath) {
+STATIC void init_breath(breath_t *breath) {
   breath->volume = 0.0f;
   breath->volume_max = 0.0f;
   breath->duration = 0.0f;
@@ -95,7 +94,7 @@ typedef struct {
   float16 flow[HISTORY_LENGTH];
 } history_t;
 
-INLINE void init_history(history_t *hist) {
+STATIC void init_history(history_t *hist) {
   for(int i=0; i<HISTORY_LENGTH; i++) { 
     hist->flow[i] = 0.0f; 
   }
@@ -121,7 +120,9 @@ typedef struct {
   float final_ips;
 
   float hack_earlyvol;
-  float hack_lastdrop;
+  float hack_minflow;
+  float hack_maxslope;
+  float ips_fa;
 
   breath_t current;
   breath_t recent;
@@ -129,7 +130,7 @@ typedef struct {
   history_t history;
 } my_data_t;
 
-INLINE void init_my_data(my_data_t *data) {
+STATIC void init_my_data(my_data_t *data) {
   data->last_progress = 0.0f;
   data->last_time = tim_read_tim5();
   data->breath_count = 0;
@@ -149,7 +150,9 @@ INLINE void init_my_data(my_data_t *data) {
   data->final_ips = 0.0f;
 
   data->hack_earlyvol = 0.0f;
-  data->hack_lastdrop = 0.0f;
+  data->hack_minflow = 0.0f;
+  data->hack_maxslope = 0.0f;
+  data->ips_fa = 0.0f;
 
   init_breath(&data->current);
   init_breath(&data->recent);
@@ -158,7 +161,7 @@ INLINE void init_my_data(my_data_t *data) {
 }
 
 const float ASV_INTERP = 0.025f; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
-INLINE void asv_interp_all(my_data_t* data) {
+STATIC void asv_interp_all(my_data_t* data) {
   breath_t *recent = &data->recent;
   breath_t *current = &data->current;
   float coeff = ASV_INTERP;
@@ -194,7 +197,7 @@ typedef struct {
 
 magic_ptr_t * const magic_ptr = (void*) (0x2000e948 + 0x11*4);
 const unsigned MAGIC = 0x07E49001;
-INLINE my_data_t * get_data() {
+STATIC my_data_t * get_data() {
   if (magic_ptr->magic != MAGIC) {
     magic_ptr->data = malloc(sizeof(my_data_t));
   }
@@ -208,7 +211,7 @@ INLINE my_data_t * get_data() {
   return magic_ptr->data;
 }
 
-INLINE float get_disabler_mult(int n) {
+STATIC float get_disabler_mult(int n) {
   if (n <= 0) { return 1.00f; }
   if (n == 1) { return 0.5f; }
   if (n == 2) { return 0.25f; }
@@ -216,7 +219,7 @@ INLINE float get_disabler_mult(int n) {
   return 0.0f;
 }
 
-INLINE void apply_jitter(int8 amt) {
+STATIC void apply_jitter(int8 amt) {
   float amtf = 0.005f * amt;
   *cmd_ps += amtf; *cmd_epap += amtf; *cmd_ipap += amtf;
 }
@@ -225,26 +228,28 @@ INLINE void apply_jitter(int8 amt) {
 // The entry point. All other functions MUST be inline
 void MAIN start(int param_1) {
   const float progress = fvars[0x20]; // Inhale(1.6s to 0.5), Exhale(4.5s from 0.5 to 1.0). Seems breath-duration-dependent. Only in S mode
-  const float s_ipap = fvars[0xe] - 2.0f;
+  const float s_ipap = fvars[0xe];
   const float s_epap = fvars[0xf];
+  const float s_ips = s_ipap - s_epap;
+  
   const float s_eps = 0.6f;
-  float s_ips = s_ipap - s_epap; // FIXME: This should be const(but I'm doing a lazy hack).
+  const float s_rise_time = 0.65f;       // (s)
+  const float s_fall_time = 0.65f;       // (s)
+  const float s_slope = 4.5f; //s_ips / s_rise_time;
 
   float epap = s_epap; // (cmH2O)
   float ips = s_ips;   // (cmH2O)
   float eps = s_eps;    // (cmH2O)
-  float rise_time = 0.65f;       // (s)
-  float fall_time = 0.65f;       // (s)
 
-  int8 toggle = 0;
+  my_data_t *d = get_data();
 
   // Binary toggle if IPAP ends in 0.2 or 0.8
+  int8 toggle = 0;
   float a = (s_ipap - (int)s_ipap);
   if (((a >= 0.1f) && (a <= 0.3f)) || ((a >= 0.7f) && (a <= 0.9f))) {
     toggle = 1;
   }
 
-  my_data_t *d = get_data();
 
   #if JITTER == 1
     apply_jitter(-d->last_jitter); // Undo last jitter, to prevent small errors from it from accumulating.
@@ -253,17 +258,10 @@ void MAIN start(int param_1) {
   float delta = 0.010f; // It's 10+-0.01ms, basically constant
   const float flow = *flow_compensated / 60.0f; // (L/s)
 
-  if (ASV_EPAP_EEPAP_ONLY > 0.0f) {
-    float a = max(d->asv_target_epap - s_epap, 0.0f) * ASV_EPAP_EEPAP_ONLY;
-    s_ips -= a;
-    ips = s_ips;
-    eps += a;
-  }
-
   // eps += max(d->asv_target_epap - s_epap, 0.0f) * ASV_EPAP_EXTRA_EPS;
   eps = max((max(d->asv_target_epap, s_epap) - 5.0f) * 0.3f, 0.4f);
 
-  float slope = ips / rise_time; // (cmH2O/s) Slope to meet IPS in rise_time milliseconds 
+  float slope = ips / s_rise_time; // (cmH2O/s) Slope to meet IPS in s_rise_time milliseconds 
   float SLOPE_MIN = slope; // (cmH2O/s)
   float SLOPE_MAX = 10.0f; // (cmH2O/s)
 
@@ -271,25 +269,27 @@ void MAIN start(int param_1) {
   slope = max(d->current.slope, SLOPE_MIN);
 
   // Process breath stage logic
-  if (d->last_progress > progress + 0.25f) { // Stock inhale trigger
-    d->stage = S_START_INHALE;
-  } else if ((d->stage == S_INHALE) && (*cmd_ps >= ips*0.98f)) {
-    d->stage = S_INHALE_LATE;
-    d->hack_earlyvol = d->current.volume;
-  } else if ((d->stage == S_INHALE) || (d->stage == S_INHALE_LATE)) {
-    #if CUSTOM_CYCLE == 1
-      // Cycle off below 0 flow, or after 100ms past configured cycle sensitivity.
-      if (flow < -0.01f * d->current.inh_maxflow) { d->stage = S_EXHALE; }
-      if (progress > 0.5f) { 
-        d->cycle_off_timer += delta;
-        if (d->cycle_off_timer >= 0.95f) { d->stage = S_EXHALE; }
-      }
-    #else
-      if (progress > 0.5f) { d->stage = S_EXHALE; }
-    #endif
-  } else if ((d->stage == S_EXHALE) && ((d->current.volume / d->current.volume_max) <= 0.1f)) {
-    d->stage = S_EXHALE_LATE;
-  }
+  {
+    if (d->last_progress > progress + 0.25f) { // Stock inhale trigger
+      d->stage = S_START_INHALE;
+    } else if ((d->stage == S_INHALE) && (d->ips_fa >= ips*0.98f)) {
+      d->stage = S_INHALE_LATE;
+      d->hack_earlyvol = d->current.volume;
+    } else if ((d->stage == S_INHALE) || (d->stage == S_INHALE_LATE)) {
+      #if CUSTOM_CYCLE == 1
+        // Cycle off below 0 flow, or after 100ms past configured cycle sensitivity.
+        if (flow < -0.01f * d->current.inh_maxflow) { d->stage = S_EXHALE; }
+        if (progress > 0.5f) { 
+          d->cycle_off_timer += delta;
+          if (d->cycle_off_timer >= 0.95f) { d->stage = S_EXHALE; }
+        }
+      #else
+        if (progress > 0.5f) { d->stage = S_EXHALE; }
+      #endif
+    } else if ((d->stage == S_EXHALE) && ((d->current.volume / d->current.volume_max) <= 0.1f)) {
+      d->stage = S_EXHALE_LATE;
+    }
+  };
 
   // Initialize new breath
   if (d->stage == S_START_INHALE) {
@@ -310,6 +310,7 @@ void MAIN start(int param_1) {
     d->asv_target_epap = max(d->asv_target_epap, s_epap);
 
     d->asv_target_ips = 0.9f * d->current.ips + 0.1f * s_ips;
+    // d->asv_target_slope = 0.9f * d->hack_maxslope + 0.1f * SLOPE_MIN;
 
     if ((ASV_DISABLER == 1) && (d->dont_support == 0)) {
       // For every 10% volume excess above 120%, or for every 1s excess above recent average te, disable ASV for 1 breath, for up to 6 at once
@@ -326,7 +327,9 @@ void MAIN start(int param_1) {
     d->cycle_off_timer = 0.0f;
     d->final_ips = 0.0f;
     d->hack_earlyvol = 0.0f;
-    d->hack_lastdrop = s_ips;
+    d->hack_minflow = 0.0f;
+    d->hack_maxslope = 0.0f;
+    d->ips_fa = 0.0f;
 
     #if (COUNT_PRETRIGGER_FLOW == 1)
       float recent_volume = 0.0f;
@@ -344,24 +347,26 @@ void MAIN start(int param_1) {
   } else {
     if (d->ticks != -1) { d->ticks += 1; }
   }
-  #if COUNT_PRETRIGGER_FLOW == 1
-    if (d->ticks != -1) {
-      d->history.flow[d->ticks % HISTORY_LENGTH] = flow;
-    }
-  #endif
 
   // Keep track of ongoing values
-  d->current.volume += flow * delta;
-  d->current.volume_max = max(d->current.volume_max, d->current.volume);
-  d->current.duration += delta;
-  d->current.exh_maxflow = min(d->current.exh_maxflow, flow); 
-  d->current.inh_maxflow = max(d->current.inh_maxflow, flow); 
-  if (d->stage == S_INHALE || d->stage == S_INHALE_LATE) {
-    d->current.ti += delta; 
-  } else if (d->stage == S_EXHALE || d->stage == S_EXHALE_LATE) {
-    d->current.te += delta;
-    if (d->final_ips == 0.0f) { d->final_ips = *cmd_ps; }
-  }
+  {
+    d->current.volume += flow * delta;
+    d->current.volume_max = max(d->current.volume_max, d->current.volume);
+    d->current.duration += delta;
+    d->current.exh_maxflow = min(d->current.exh_maxflow, flow); 
+    d->current.inh_maxflow = max(d->current.inh_maxflow, flow); 
+    if (d->stage == S_INHALE || d->stage == S_INHALE_LATE) {
+      d->current.ti += delta; 
+    } else if (d->stage == S_EXHALE || d->stage == S_EXHALE_LATE) {
+      d->current.te += delta;
+      if (d->final_ips == 0.0f) { d->final_ips = *cmd_ps; }
+    }
+    #if COUNT_PRETRIGGER_FLOW == 1
+      if (d->ticks != -1) {
+        d->history.flow[d->ticks % HISTORY_LENGTH] = flow;
+      }
+    #endif
+  };
 
   #if ASV == 1
     int i = d->ticks/ASV_STEP_LENGTH;
@@ -374,27 +379,28 @@ void MAIN start(int param_1) {
       float current_flow = d->current.targets[i] - d->current.targets[i-1];
       float error_flow = current_flow / (recent_flow + 0.001f);
 
-      // This way:  95-130% => 0 to -1;  95-50% => 0 to 1
-      float ips_adjustment = map01c(error_volume, 0.95f, 0.5f) - map01c(error_volume, 0.98f, 1.3f);
       #if ASV_DYNAMIC_GAIN == 1
         float base_ips = max(d->current.ips, s_ips);
-        float base_slope = max(d->current.slope, slope);
+        // float base_slope = max(d->current.slope, slope);
       #else
         float base_ips = max(d->asv_target_ips, s_ips);
-        float base_slope = max(d->asv_target_slope, slope);
       #endif
+      float base_slope = max(d->asv_target_slope, s_slope);
+      
+      // This way:  95-130% => 0 to -1;  95-50% => 0 to 1
+      float ips_adjustment = map01c(error_volume, 0.90f, 0.5f) - map01c(error_volume, 0.95f, 1.3f);
       // The 0.05f values ensure the adjustment is not super tiny.
-      d->current.ips = base_ips;
+      d->current.ips = s_ips;
       if (ips_adjustment > 0.01f) {
         d->current.ips += min(ips_adjustment + 0.05f, 1.0f) * ASV_GAIN;
       } else if (ips_adjustment < -0.01f) {
         d->current.ips += max(ips_adjustment - 0.05f, -1.0f) * (base_ips - s_ips);
       }
-      d->current.ips = clamp(d->current.ips, max(s_ips, *cmd_ps), s_ips + ASV_MAX_IPS);
+      d->current.ips = clamp(d->current.ips, max(s_ips, d->ips_fa), s_ips + ASV_MAX_IPS);
       d->current.ips = s_ips + get_disabler_mult(d->asv_disable) * (d->current.ips - s_ips);
 
       #if ASV_SLOPE == 1
-        float slope_adjustment = map01c(error_flow, 0.9f, 0.5f) - map01c(error_flow, 0.95f, 1.2f);
+        float slope_adjustment = map01c(error_flow, 0.90f, 0.5f) - map01c(error_flow, 0.95f, 1.2f);
         d->current.slope = base_slope;
         if (ips_adjustment > 0.01f) {
           d->current.slope += min(slope_adjustment + 0.05f, 1.0f) * (SLOPE_MAX - base_slope);
@@ -402,8 +408,11 @@ void MAIN start(int param_1) {
           d->current.slope += max(slope_adjustment - 0.05f, -1.0f) * (base_slope - SLOPE_MIN);
         }
       #else
-        d->current.slope = d->current.ips / rise_time;
+        d->current.slope = d->current.ips / s_rise_time;
       #endif
+
+      // d->hack_maxslope = 
+
     }
     // eps += (d->asv_target_epap - s_epap) * 0.2f; // 0.2cmH2O extra EPS for every 1cmH2O of EPAP
     ips = max(d->current.ips, s_ips);
@@ -414,65 +423,73 @@ void MAIN start(int param_1) {
          eps = max(0.0f, eps - (d->current.ips - s_ips) * EPS_REDUCE_WHEN_ASV);
       }
     }
+
+    // if (toggle) {
+    //   ips = s_ips;
+    //   slope = SLOPE_MIN;
+    //   eps = 0.6f;
+    // }
   #endif
 
-  if (toggle) {
-    ips = s_ips;
-    slope = SLOPE_MIN;
-    eps = 0.6f;
+  // Handle EPAP adjustment
+  {
+    if (d->asv_target_epap < d->asv_target_epap_target) {
+      d->asv_target_epap += 0.025f * delta; // 40s to change by 1cmH2O
+    } else {
+      d->asv_target_epap -= 0.0125f * delta; // 1m20s to drop by 1cmH2O
+    }
+    d->asv_target_epap = clamp(d->asv_target_epap, s_epap, s_epap + ASV_MAX_EPAP);
+    epap = d->asv_target_epap;
   }
-
-  if (d->asv_target_epap < d->asv_target_epap_target) {
-    d->asv_target_epap += 0.025f * delta; // 40s to change by 1cmH2O
-  } else {
-    d->asv_target_epap -= 0.0125f * delta; // 1m20s to drop by 1cmH2O
-  }
-  d->asv_target_epap = clamp(d->asv_target_epap, s_epap, s_epap + ASV_MAX_EPAP);
-  epap = d->asv_target_epap;
 
   // Set the commanded PS and EPAP values based on our target
   *cmd_epap = epap;
   if (d->dont_support) {
-    *cmd_ps = interp(*cmd_ps, 0.0f, 3.0f * delta);
+    inplace(interp, cmd_ps, 0.0f, 3.0f * delta);
   } else {
-    if (d->stage == S_INHALE) {
+    if (d->stage == S_INHALE || d->stage == S_INHALE_LATE) {
       float t = d->current.ti;
-      if (t < 0.055f) { slope = SLOPE_MAX; }
-      // if (ips - *cmd_ps <= 0.4f) { slope *= 0.5f; }
-      // if (ips - *cmd_ps <= 0.2f) { slope *= 0.5f; }
-      if (ips - *cmd_ps <= 0.3f) { slope *= 0.5f; }
-      if (ips - *cmd_ps <= 0.0f) { slope  = 0.0f; }
+      // "Flow Assist"
+      if (d->stage == S_INHALE) {
+        if (t < 0.055f) { slope = SLOPE_MAX; }
+        if (ips - d->ips_fa <= 0.3f) { slope *= 0.5f; }
+        if (ips - d->ips_fa <= 0.0f) { slope  = 0.0f; }
 
-      *cmd_ps = min(ips, *cmd_ps + slope * delta ); // Avoid mid-slope PS drops.
-      d->hack_lastdrop = *cmd_ps;
-    } if (d->stage == S_INHALE_LATE) { 
-      float t = d->current.ti;
-
-      // This mimics Flow Assist
-      if ((IPS_EARLY_DOWNSLOPE > 0.0f)
-          && (t >= max(d->recent.ti * 0.6f, 0.6f))
-          && (d->current.volume >= d->recent.volume * 0.6f)
-      ) {
-        float ips_drop = IPS_EARLY_DOWNSLOPE * ips;
-        float drop = map01c(flow / d->current.inh_maxflow, 0.7f, 0.0f) * ips_drop;
-        // float drop_max = ips_drop / 0.3f * delta; // Assume the fastest we want is reaching the drop in 300ms
-        // *cmd_ps = clamp(ips - drop, *cmd_ps - drop_max, *cmd_ps);
-        *cmd_ps = clamp(ips - drop, 0.0f, d->hack_lastdrop);
-        d->hack_lastdrop = *cmd_ps;
-      } else {
-        *cmd_ps = ips;
+        d->ips_fa = min(ips, d->ips_fa + slope * delta ); // Avoid mid-slope PS drops.
+        d->hack_minflow = d->current.inh_maxflow;
+      } else { 
+        // This mimics Flow Assist
+        if ((IPS_EARLY_DOWNSLOPE > 0.0f)
+            && (t >= max(d->recent.ti * 0.6f, 0.6f))
+            && (d->current.volume >= d->recent.volume * 0.6f)
+        ) {
+          float ips_drop = IPS_EARLY_DOWNSLOPE * ips;
+          float drop = map01c(min(flow, d->hack_minflow) / d->current.inh_maxflow, 0.7f, 0.0f) * ips_drop;
+          // float drop_max = ips_drop / 0.3f * delta; // Assume the fastest we want is reaching the drop in 300ms
+          // d->ips_fa = ips - drop;
+          d->ips_fa = clamp(ips - drop, 0.0f, ips);
+          d->hack_minflow = min(d->hack_minflow, flow);
+        } else {
+          d->ips_fa = ips;
+        }
       }
 
       // Volume Assist
-      const float IPS_VOL = 5.0f;
-      *cmd_ps += min(IPS_VOL * (d->current.volume - d->hack_earlyvol), 2.0f);
+      // const float IPS_VOL = 5.0f;
+      // float vol2 = d->current.volume;
+      // if (vol2 >= 0.7f) { vol2 = 0.7f + (vol2-0.7f) * 0.66f; }
+      // if (vol2 >= 0.5f) { vol2 = 0.5f + (vol2-0.5f) * 0.66f; }
+      // float ips_va = min(vol2 * IPS_VOL, 3.0f);
+
+      // *cmd_ps = d->ips_fa + ips_va;
+      *cmd_ps = d->ips_fa;
 
     } else if (d->stage == S_EXHALE || d->stage == S_EXHALE_LATE) { // Exhale
       float t = d->current.te;
       float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.05f, 0.6f);
       eps_mult = min(eps_mult, map01c(t, EPS_FIXED_TIME, 0.4f));
 
-      float ips_mult = map01c(t, fall_time, 0.0f); ips_mult = ips_mult * ips_mult * 0.95f;
+      float ips_mult = map01c(t, s_fall_time, 0.0f); ips_mult = ips_mult * ips_mult * 0.95f;
       if (EPS_FLOWBASED_DOWNSLOPE > 0.0f) {
         float temp = EPS_FLOWBASED_DOWNSLOPE;
         ips_mult = min(ips_mult, ips_mult * (1.0f-temp) + temp * map01c(flow, -d->current.inh_maxflow * 0.9f, 0.0f) );
@@ -482,8 +499,9 @@ void MAIN start(int param_1) {
   }
   d->last_progress = progress;
 
+
   // Safeguards against going cray cray
-  *cmd_ps = clamp(*cmd_ps, -eps, s_ips + ASV_MAX_IPS + 2.0f);
+  *cmd_ps = clamp(*cmd_ps, -eps, s_ips + ASV_MAX_IPS + 1.0f);
   *cmd_epap = clamp(*cmd_epap, s_epap - 1, s_epap + ASV_MAX_EPAP);
   *cmd_ipap = *cmd_epap + *cmd_ps;
 

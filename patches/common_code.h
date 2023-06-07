@@ -69,14 +69,14 @@ const   int *pap_timer = &ivars[0];
   _a > __max ? __max : (_a < __min ? __min : a); \
 })
 
-INLINE float clamp01(float a) { return clamp(a, 0.0f, 1.0f); }
+STATIC float clamp01(float a) { return clamp(a, 0.0f, 1.0f); }
 
-INLINE float map01(float s, float start, float end) {
+STATIC float map01(float s, float start, float end) {
    return (s - start)/(end-start);
 }
 
 // Version that clamps to 0-1
-INLINE float map01c(float s, float start, float end) {
+STATIC float map01c(float s, float start, float end) {
    return clamp( map01(s, start, end), 0.0f, 1.0f );
 }
 

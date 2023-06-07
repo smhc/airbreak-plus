@@ -22,4 +22,6 @@ typedef unsigned size_t;
 
 extern void * malloc(size_t __size);
 
+extern void pressure_work(int param_1);
+
 #endif

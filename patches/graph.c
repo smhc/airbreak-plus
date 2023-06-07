@@ -59,7 +59,7 @@ int start(void) {
 
 	#if DRAW_PRESSURE == 1
 		// If we're in S mode, draw its target EPAP and IPAP range
-		if (ivars[0x6f] == 4) {
+		if (*therapy_mode == 4) {
 			if (fvars[0x20] <= 0.5f) { // Active inhale
 				GUI_SetColor(0x202020);
 			} else {

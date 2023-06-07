@@ -65,6 +65,9 @@ patch_direct() {
 	fi
 }
 
+# BIN_FILE - file
+# ADDR - address in the patched binary to point to
+# PTR_ADDR - address of the +1 pointer in the binary
 # PTR_TARGET is +1 relative to ADDR, and byte order is reversed(little-endian)
 patch_pointer() {
 	BIN_FILE=$1
@@ -82,6 +85,7 @@ patch_code_ventilator() {
 	patch_direct patches/ventilator.bin 0xbb734
 }
 
+
 patch_code_graph() {
 	patch_pointer patches/graph.bin 0xfd000 0xf9c88 '\x01\xd0\x0f\x08'
 }
@@ -98,10 +102,27 @@ patch_code_squarewave_pav() {
 	patch_pointer patches/squarewave_pav.bin 0xfd300 0xf9778 '\x01\xd3\x0f\x08'
 }
 
+
+patch_code_easybreathe() {
+	die "Patching this function not allowed, shit goes haywire, not sure why"
+	patch_pointer patches/easybreathe.bin 0xfe368 0xf886c '\x69\xe3\x0f\x08'
+}
+
+
 patch_code() {
-	BUILD_FLAGS=$(( BUILD_FLAGS | (1 << 0) ))
-	patch_code_squarewave
-	patch_code_graph
+	if [[ $PATCH_CODE == 1 ]] ; then
+		BUILD_FLAGS=$(( BUILD_FLAGS | (1 << 0) ))
+		echo "Patching code"
+		patch_code_graph
+		if [[ $PATCH_ASV == 1 ]] ; then
+			patch_code_squarewave_asv
+		elif [[ $PATCH_PAV == 1 ]] ; then 
+			patch_code_squarewave_pav
+		else
+			patch_code_squarewave
+		fi
+		# patch_code_easybreathe
+	fi
 }
 
 unlock_ui_limits() {
@@ -220,19 +241,8 @@ check_hash
 patch_tamper
 patch_strings
 
-if [[ $PATCH_CODE == 1 ]] ; then
-	echo "Patching code"
-	patch_code_graph
-	if [[ $PATCH_ASV == 1 ]] ; then
-		patch_code_squarewave_asv
-	elif [[ $PATCH_PAV == 1 ]] ; then 
-		patch_code_squarewave_pav
-	else
-		patch_code_squarewave
-	fi
-fi
+patch_code # Handled based on environmental variables, no need to comment out
 
-# patch_code # 1
 unlock_ui_limits # 2
 extra_debug # 4
 extra_modes # 8

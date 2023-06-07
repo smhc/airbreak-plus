@@ -189,8 +189,9 @@ c2: at peak
 c3: also at peak?
 
 
-not_called_during_loop:18 - I think this is the down-slope of squarewave
-if (FLOAT_080b0650 <= *local_14) {
+not_called_during_loop(0x080f9778) - SquareWave pressure setter
+
+`if (FLOAT_080b0650 <= *local_14) { ... }`
 
 TODO: Try replacing with a call to pressure_scale_not_called
 

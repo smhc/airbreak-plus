@@ -90,6 +90,7 @@ patch_code_graph() {
 	patch_pointer patches/graph.bin 0xfd000 0xf9c88 '\x01\xd0\x0f\x08'
 }
 
+# Replaces not_called_during_loop
 patch_code_squarewave() {
 	patch_pointer patches/squarewave.bin 0xfd300 0xf9778 '\x01\xd3\x0f\x08'
 }

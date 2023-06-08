@@ -1,4 +1,4 @@
-all: stm32-unlocked.bin stm32-patched.bin stm32-asv.bin stm32-pav.bin
+all: stm32-unlocked.bin stm32-patched.bin stm32-asv.bin # stm32-pav.bin
 
 stm32-unlocked.bin: patch-airsense
 	./patch-airsense stm32.bin $@

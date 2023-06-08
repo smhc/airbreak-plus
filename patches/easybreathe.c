@@ -31,5 +31,4 @@ void MAIN start(int param_1) {
   // } else {
   //   *cmd_ps = (progress-1.0f) * 1.0f;
   // }
-
 }

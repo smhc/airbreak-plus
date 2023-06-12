@@ -36,7 +36,14 @@ const float *actual_pressure = &fvars[1]; // (cmH2O) Actual current pressure in 
 const   int *therapy_mode = &ivars[0x6f]; // It's 0 when device is inactive
 const   int *pap_timer = &ivars[0];
 
-#define p_error (*flow_compensated - *cmd_ipap)
+#define f_patient (fvars[0x0])
+#define f_compensated (fvars[0x25])
+#define f_unfucked (fvars[0x0] - fvars[0x22])
+
+#define p_actual  (fvars[1])
+#define p_command (fvars[0x2a])
+
+#define p_error (fvars[1] - fvars[0x2a]) // Positive when above target
 
 // I believe these are the reported EPAP and IPAP written to EDF files.
 // However, they're probably written somewhere else(before end of inspiration), which needs to be debugged to write them

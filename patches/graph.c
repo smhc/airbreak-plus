@@ -6,10 +6,20 @@
 
 #define DRAW_PRESSURE 1
 #define DRAW_FLOW 0
-#define DRAW_TEST 1
+
+STATIC float rescale(float value, float start, float end, float graph_height) {
+	return map01(value, start, end) * graph_height;
+}
+
+
+STATIC void LCD_FillRect2(int x1, int y1, int x2, int y2) {
+	int temp = 0;
+	if (y1 < y2) { temp = y2; y2 = y1; y1 = temp; }
+	LCD_FillRect(x1, y1, x2, y2);
+}
 
 // Replaces `gui_fill_rect_set_colors`
-int start(void) {
+int MAIN start(void) {
 	// don't do anything if we are not in an active therapy mode
 	if (*therapy_mode == 0) return 0;
 
@@ -38,75 +48,77 @@ int start(void) {
 	const int bottom = 235;
 	const int height = bottom - top;
 
+	#define HEIGHT_PRES 40
+	#define HEIGHT_FLOW 40
+
 	const float PRESSURE_MAX = 20.0f;
 	const float vscale = (height / PRESSURE_MAX); 
+
+	const float p_min = 5.0f;
+	const float p_max = 15.0f;
+	// const float vscale = HEIGHT_PRES / (p_max - p_min); 
+
 	
 	const unsigned pos_x = (ivars[0] / 7) % width; // ~14px per second (unit of timer is 10ms)
 
-	int pressure = vscale * fvars[1];    // Current pressure. fvars[2] also has pressure, but it's overscaled?
-	int command  = vscale * fvars[0x2a]; // Prescribed target
+	int pressure = rescale(p_actual, p_min, p_max, HEIGHT_PRES);
+	int command = rescale(p_command, p_min, p_max, HEIGHT_PRES);
+	int error = -p_error * ( HEIGHT_PRES / (p_max-p_min) * 3.0f); // Error 
+	// int error = rescale(p_error, p_min, p_max, HEIGHT_PRES) * 3.0f; // Error 
 
-	int error = vscale * (fvars[0x2a] - fvars[1]) * 3.0f; // Error 
-
-	if (pressure < 0) pressure = 0;
-	if (pressure > height) pressure = height;
-	if (command < 0) command = 0;
-	if (command > height) command = height;
-
-	GUI_SetColor(0x000000); // Black BGR
-	LCD_FillRect(pos_x, top, pos_x + 8, bottom);
-
-
-	#if DRAW_PRESSURE == 1
-		// If we're in S mode, draw its target EPAP and IPAP range
-		if (*therapy_mode == 4) {
-			if (fvars[0x20] <= 0.5f) { // Active inhale
-				GUI_SetColor(0x202020);
-			} else {
-				GUI_SetColor(0x101010);
-			}
-			LCD_FillRect(pos_x, bottom - fvars[0xe] * vscale, pos_x + 4, bottom - fvars[0xf] * vscale);
+	#if 0 
+		// Clear pixels with black BGR 
+		GUI_SetColor(0x000000);
+		LCD_FillRect(pos_x, top, pos_x + 8, bottom);
+	#else
+		if (fvars[0x20] <= 0.5f) { // Active inhale
+			GUI_SetColor(0x202020);
+		} else {
+			GUI_SetColor(0x000000);
 		}
+		LCD_FillRect(pos_x, top, pos_x + 4, bottom);
+	#endif
 
+	GUI_SetColor(0x202020);
+	LCD_DrawPixel(pos_x, top);
+	LCD_DrawPixel(pos_x, top + HEIGHT_FLOW);
+	LCD_DrawPixel(pos_x, top + HEIGHT_FLOW + HEIGHT_PRES);
+
+	float g_top = top + HEIGHT_FLOW;
+	float g_bottom = top + HEIGHT_FLOW + HEIGHT_PRES;
+	float g_vscale = PRESSURE_MAX / HEIGHT_PRES;
+
+	#if HEIGHT_PRES > 0
 		// draw 0, 5, 10, 15, 20 very faintly
-		GUI_SetColor(0x202020);
-		LCD_DrawPixel(pos_x, bottom);
-		LCD_DrawPixel(pos_x, bottom - 5 * vscale);
-		LCD_DrawPixel(pos_x, bottom - 10 * vscale);
-		LCD_DrawPixel(pos_x, bottom - 15 * vscale);
-		LCD_DrawPixel(pos_x, bottom - 20 * vscale);
+		// GUI_SetColor(0x202020);
+		// LCD_DrawPixel(pos_x, g_bottom - 5 * g_vscale);
+		// LCD_DrawPixel(pos_x, g_bottom - 10 * g_vscale);
+		// LCD_DrawPixel(pos_x, g_bottom - 15 * g_vscale);
+		// LCD_DrawPixel(pos_x, g_bottom - 20 * g_vscale);
 
-		#if 0
-			// draw the current commanded pressure faintly
-			GUI_SetColor(0x0000F0);
-			// GUI_SetColor(0x00FF00);
-			LCD_DrawPixel(pos_x, bottom - command);
+		// draw amplified pressure error with respect to the commanded pressure
+		GUI_SetColor(0x000080);
 
-			// // draw the current actual pressure in bright green
-			GUI_SetColor(0x00FF00);
-			LCD_DrawPixel(pos_x, bottom - pressure);
-		#else
-			// draw amplified pressure error with respect to the commanded pressure
-			GUI_SetColor(0x000080);
-			if (error > 0) {
-				LCD_FillRect(pos_x, bottom - command, pos_x, bottom - command + error );
-			} else {
-				LCD_FillRect(pos_x, bottom - command + error, pos_x, bottom - command );
-			}
-
-			// draw the current commanded pressure
-			GUI_SetColor(0x00FFF0);
-			LCD_DrawPixel(pos_x, bottom - command);
-		#endif
+		LCD_FillRect2(pos_x, g_bottom - command, pos_x, g_bottom - command + error );
+		// draw the current commanded pressure
+		GUI_SetColor(0x00FFF0);
+		LCD_DrawPixel(pos_x, g_bottom - command);
 
 	#endif
 
-	#if DRAW_FLOW == 1
+	g_top = top;
+	g_bottom = top + HEIGHT_FLOW;
+	g_vscale = 1.0f / (HEIGHT_FLOW*2);
+
+	#if HEIGHT_FLOW > 0
 		GUI_SetColor(0x202020);
-		LCD_DrawPixel(pos_x, top + height/2);
+		LCD_DrawPixel(pos_x, g_top + HEIGHT_FLOW/2);
+		// Draw unfucked flow variable
+		GUI_SetColor(0x6600FF);
+		LCD_DrawPixel(pos_x, g_top + HEIGHT_FLOW/2 - f_unfucked / 2);
 		// Draw the leak-compensated flow variable
 		GUI_SetColor(0x00FF00);
-		LCD_DrawPixel(pos_x, top + height/2 - fvars[0x25] / 2);
+		LCD_DrawPixel(pos_x, g_top + HEIGHT_FLOW/2 - f_compensated / 2);
 	#endif
 
 	// restore the old clipping rectangle

@@ -6,7 +6,8 @@
                                 // (maybe important for early calculations, but I think it's likely to underestimate limitations in )
 
 #define CUSTOM_TRIGGER 1
-#define CUSTOM_CYCLE 0
+#define CUSTOM_CYCLE 1
+const float CUSTOM_CYCLE_SENS = -0.05f;
 #define JITTER 2 // 0 = off, 1 = on, 2 = shift epap/ips balance only
 
 #define ASV 0
@@ -16,7 +17,7 @@
 #define ASV_IPS_OVERSHOOT 0
 #define ASV_DYNAMIC_GAIN 0
 
-const float IPS_EARLY_DOWNSLOPE = 0.0f; // %
+const float IPS_EARLY_DOWNSLOPE = 0.4f; // %
 
 const float EPS_FLOWBASED_DOWNSLOPE = 0.75f; // Maximum flowbased %
 const float EPS_FIXED_TIME = 1.1f;
@@ -265,22 +266,22 @@ void MAIN start(int param_1) {
 
   float delta = 0.010f; // It's 10+-0.01ms, basically constant
   const float flow = *flow_compensated / 60.0f; // (L/s)
-  const float flow2 = f_unfucked / 60.0f; // (L/s)
+  // const float flow2 = f_unfucked / 60.0f; // (L/s)
 
   // eps += max(d->asv_target_epap - s_epap, 0.0f) * ASV_EPAP_EXTRA_EPS;
   eps = 0.2f + max((max(d->asv_target_epap, s_epap) - 5.0f) * 0.3f, 0.4f);
 
   float slope = ips / s_rise_time; // (cmH2O/s) Slope to meet IPS in s_rise_time milliseconds 
   float SLOPE_MIN = slope; // (cmH2O/s)
-  float SLOPE_MAX = 10.0f; // (cmH2O/s)
+  float SLOPE_MAX = 12.0f; // (cmH2O/s)
 
   ips   = max(d->current.ips, s_ips);
   slope = max(d->current.slope, SLOPE_MIN);
 
   // Process breath stage logic
   {
-    float sens = 0.5f + 0.5f * map01c(d->current.duration, 0.9f, 1.4f);
-    int8 start_inhale = ( (flow>-0.08f) * clamp(-p_error / 3.0f, 0.0f, 0.1f) + flow) * sens >= 0.065f;
+    float sens = 0.5f + 0.5f * map01c(d->current.duration, max(0.9f, d->recent.te * 0.5f), max(1.4f, d->recent.te * 0.85f));
+    int8 start_inhale = ( (flow>-0.08f) * clamp(-p_error / 3.0f, -0.02f, 0.06f) + flow) * sens >= 0.07f;
     // int8 start_inhale = (flow >= 0.06f);
     // int8 exhale_done = (d->current.duration > 0.9f);
     if
@@ -298,8 +299,7 @@ void MAIN start(int param_1) {
       d->hack_earlyvol = d->current.volume;
     } else if ((d->stage == S_INHALE) || (d->stage == S_INHALE_LATE)) {
       #if CUSTOM_CYCLE == 1
-        const float rf = flow / d->current.inh_maxflow;
-        int8 do_cycle = (d->current.duration > 0.5f) && (rf <= -0.01f + clamp(p_error * 1.5f, 0.0f, 0.25f));
+        const int8 do_cycle = (flow / d->current.inh_maxflow) <= CUSTOM_CYCLE_SENS;
         // Cycle off below 0 flow, or after 100ms past configured cycle sensitivity.
         if (do_cycle) { d->stage = S_EXHALE; }
         if (progress > 0.5f) { 
@@ -483,43 +483,43 @@ void MAIN start(int param_1) {
     if (d->stage == S_INHALE || d->stage == S_INHALE_LATE) {
       float t = d->current.ti;
 
-      if (t < 0.075f) { slope = SLOPE_MAX; }
-      if (ips*0.66f - d->ips_fa <= 0.3f) { slope *= 0.5f; }
-      if (ips*0.66f - d->ips_fa <= 0.0f) { slope *= 0.66f; }
+      #if 0 
+        if (t < 0.075f) { slope = SLOPE_MAX; }
+        if (ips*0.66f - d->ips_fa <= 0.3f) { slope *= 0.5f; }
+        if (ips*0.66f - d->ips_fa <= 0.0f) { slope *= 0.66f; }
 
-      d->ips_fa = min(ips, d->ips_fa + slope * delta ); // Avoid mid-slope PS drops.
+        d->ips_fa = min(ips, d->ips_fa + slope * delta ); // Avoid mid-slope PS drops.
 
-      if (t < 0.075f) { slope = SLOPE_MAX; d->ips_fa = slope * 0.07f; }
+        if (t < 0.075f) { slope = SLOPE_MAX; d->ips_fa = slope * 0.07f; }
 
-      // // "Flow Assist"
-      // if (d->stage == S_INHALE) {
-      //   if (t < 0.075f) { slope = SLOPE_MAX; }
-      //   if (ips - d->ips_fa <= 0.3f) { slope *= 0.5f; }
-      //   if (ips - d->ips_fa <= 0.0f) { slope  = 0.0f; }
+        *cmd_ps = d->ips_fa;
+      #else 
+        // "Flow Assist"
+        if (d->stage == S_INHALE) {
+          if (t < 0.075f) { slope = SLOPE_MAX; }
+          // if (ips - d->ips_fa <= 0.3f) { slope *= 0.5f; }
+          if (ips - d->ips_fa <= 0.0f) { slope  = 0.0f; }
 
-      //   d->ips_fa = min(ips, d->ips_fa + slope * delta ); // Avoid mid-slope PS drops.
-      //   d->hack_minflow = d->current.inh_maxflow;
-      // } else { 
-      //   // This mimics Flow Assist
-      //   if ((IPS_EARLY_DOWNSLOPE > 0.0f)
-      //       && (t >= max(d->recent.ti * 0.6f, 0.6f))
-      //       && (d->current.volume >= d->recent.volume * 0.6f)
-      //   ) {
-      //     float ips_drop = IPS_EARLY_DOWNSLOPE * ips;
-      //     float drop = map01c(min(flow, d->hack_minflow) / d->current.inh_maxflow, 0.7f, 0.0f) * ips_drop;
-      //     // float drop_max = ips_drop / 0.3f * delta; // Assume the fastest we want is reaching the drop in 300ms
-      //     // d->ips_fa = ips - drop;
-      //     d->ips_fa = clamp(ips - drop, 0.0f, ips);
-      //     d->hack_minflow = min(d->hack_minflow, flow);
-      //   } else {
-      //     d->ips_fa = ips;
-      //   }
-      // }
-
-      #if 0
-        float extra_ass = clamp((t - s_rise_time) * slope * 0.33f, 0.0f, 1.0f);
-        *cmd_ps = d->ips_fa + extra_ass;
-      #else
+          d->ips_fa = min(ips, d->ips_fa + slope * delta ); // Avoid mid-slope PS drops.
+          d->hack_minflow = d->current.inh_maxflow;
+        } else { 
+          // This mimics Flow Assist
+          if ((IPS_EARLY_DOWNSLOPE > 0.0f)
+              && (t >= max(d->recent.ti * 0.6f, 0.6f))
+              && (d->current.volume >= d->recent.volume * 0.6f)
+          ) {
+            float ips_drop = IPS_EARLY_DOWNSLOPE * ips;
+            float drop = map01c(min(flow, d->hack_minflow) / d->current.inh_maxflow, 0.6f, 0.05f) * ips_drop;
+            float drop_max = ips_drop / 0.3f * delta; // Assume the fastest we want is reaching the drop in 300ms
+            // d->ips_fa = ips - drop;
+            if (flow >= d->current.inh_maxflow * 0.05f) { // Don't drop when we're already close to 0
+              d->ips_fa = clamp(ips - drop, d->ips_fa - drop_max, ips);
+              d->hack_minflow = min(d->hack_minflow, flow);
+            }
+          } else {
+            d->ips_fa = ips;
+          }
+        }
         *cmd_ps = d->ips_fa;
       #endif
 

@@ -14,7 +14,7 @@ STATIC float rescale(float value, float start, float end, float graph_height) {
 
 STATIC void LCD_FillRect2(int x1, int y1, int x2, int y2) {
 	int temp = 0;
-	if (y1 < y2) { temp = y2; y2 = y1; y1 = temp; }
+	if (y1 > y2) { temp = y2; y2 = y1; y1 = temp; }
 	LCD_FillRect(x1, y1, x2, y2);
 }
 
@@ -59,7 +59,7 @@ int MAIN start(void) {
 	// const float vscale = HEIGHT_PRES / (p_max - p_min); 
 
 	
-	const unsigned pos_x = (ivars[0] / 7) % width; // ~14px per second (unit of timer is 10ms)
+	const unsigned pos_x = (ivars[0] / 10) % width; // ~10px per second (unit of timer is 10ms)
 
 	int pressure = rescale(p_actual, p_min, p_max, HEIGHT_PRES);
 	int command = rescale(p_command, p_min, p_max, HEIGHT_PRES);
@@ -72,14 +72,14 @@ int MAIN start(void) {
 		LCD_FillRect(pos_x, top, pos_x + 8, bottom);
 	#else
 		if (fvars[0x20] <= 0.5f) { // Active inhale
-			GUI_SetColor(0x202020);
+			GUI_SetColor(0x101010);
 		} else {
 			GUI_SetColor(0x000000);
 		}
-		LCD_FillRect(pos_x, top, pos_x + 4, bottom);
+		LCD_FillRect(pos_x, top -1, pos_x + 3, bottom + 1);
 	#endif
 
-	GUI_SetColor(0x202020);
+	GUI_SetColor(0x303030);
 	LCD_DrawPixel(pos_x, top);
 	LCD_DrawPixel(pos_x, top + HEIGHT_FLOW);
 	LCD_DrawPixel(pos_x, top + HEIGHT_FLOW + HEIGHT_PRES);

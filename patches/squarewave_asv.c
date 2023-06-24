@@ -5,19 +5,18 @@
 #define COUNT_PRETRIGGER_FLOW 0 // Include pre-breath-start positive flow values into cumulative volume of current breath
                                 // (maybe important for early calculations, but I think it's likely to underestimate limitations in )
 
-#define CUSTOM_TRIGGER 1
-#define CUSTOM_CYCLE 1
+#define CUSTOM_TRIGGER 0
+#define CUSTOM_CYCLE 2 // 0=stock, 1=-5% or +100ms, 2= stock-15%
 const float CUSTOM_CYCLE_SENS = -0.05f;
 #define JITTER 2 // 0 = off, 1 = on, 2 = shift epap/ips balance only
 
-#define ASV 0
+#define ASV 1
 #define ASV_SLOPE 1
 
 #define ASV_DISABLER 1 // Disable ASV after hyperpneas and/or apneas (because all of mine are central, todo: differentiate the two)
-#define ASV_IPS_OVERSHOOT 0
 #define ASV_DYNAMIC_GAIN 0
 
-const float IPS_EARLY_DOWNSLOPE = 0.4f; // %
+const float IPS_EARLY_DOWNSLOPE = 0.45f; // %
 
 const float EPS_FLOWBASED_DOWNSLOPE = 0.75f; // Maximum flowbased %
 const float EPS_FIXED_TIME = 1.1f;
@@ -34,7 +33,7 @@ const float FOT_AMPLITUDE = 0.2f;
 #define ASV_STEP_SKIP 1 // Amount of steps before first doing ASV adjustments. MUST be at least 1 or code will crash due to out of bounds target array read
 const float ASV_MAX_IPS = 2.0f;
 const float ASV_GAIN = 3.0f; // 4.0f seems fine but maybe a bit aggressive?
-const float ASV_MAX_EPAP = 1.0f;
+const float ASV_MAX_EPAP = 0.0f;
 const float ASV_EPAP_EXTRA_EPS = 0.2f; // How much extra EPS per EPAP
 
 
@@ -237,12 +236,8 @@ STATIC void apply_jitter(int8 amt) {
 // The entry point. All other functions MUST be inline
 void MAIN start(int param_1) {
   const float progress = fvars[0x20]; // Inhale(1.6s to 0.5), Exhale(4.5s from 0.5 to 1.0). Seems breath-duration-dependent. Only in S mode
-  const float s_ipap = fvars[0xe];
-  const float s_epap = fvars[0xf];
-  const float s_ips = s_ipap - s_epap;
-  
   const float s_eps = 0.6f;
-  const float s_rise_time = 0.75f;       // (s)
+  const float s_rise_time = s_rise_time_f;       // (s)
   const float s_fall_time = 0.65f;       // (s)
   const float s_slope = s_ips / s_rise_time;
 
@@ -280,17 +275,14 @@ void MAIN start(int param_1) {
 
   // Process breath stage logic
   {
-    float sens = 0.5f + 0.5f * map01c(d->current.duration, max(0.9f, d->recent.te * 0.5f), max(1.4f, d->recent.te * 0.85f));
-    int8 start_inhale = ( (flow>-0.08f) * clamp(-p_error / 3.0f, -0.02f, 0.06f) + flow) * sens >= 0.07f;
-    // int8 start_inhale = (flow >= 0.06f);
-    // int8 exhale_done = (d->current.duration > 0.9f);
-    if
     #if CUSTOM_TRIGGER == 1 
+      float sens = 0.5f + 0.5f * map01c(d->current.duration, max(0.9f, d->recent.te * 0.5f), max(1.4f, d->recent.te * 0.85f));
+      int8 start_inhale = ( (flow>-0.08f) * clamp(-p_error / 3.0f, -0.02f, 0.06f) + flow) * sens >= 0.07f;
+      // int8 exhale_done = (d->current.duration > 0.9f);
       // } else if (((d->stage == S_EXHALE) || (d->stage == S_EXHALE_LATE)) && (exhale_done && start_inhale)) {
-      (((d->stage == S_UNINITIALIZED) || (d->stage == S_EXHALE) || (d->stage == S_EXHALE_LATE)) && start_inhale)
-      // if ((d->stage == S_EXHALE_LATE) && (exhale_done && start_inhale)) {
+      if (((d->stage == S_UNINITIALIZED) || (d->stage == S_EXHALE_LATE)) && start_inhale)
     #else
-      (d->last_progress > progress + 0.25f) // Stock inhale trigger
+      if (d->last_progress > progress + 0.25f) // Stock inhale trigger
     #endif
     {
         d->stage = S_START_INHALE;
@@ -305,6 +297,10 @@ void MAIN start(int param_1) {
         if (progress > 0.5f) { 
           d->cycle_off_timer += delta;
           if (d->cycle_off_timer >= 0.95f) { d->stage = S_EXHALE; }
+        }
+      #elif CUSTOM_CYCLE == 2
+        if ( (flow / d->current.inh_maxflow) <= (sens_cycle-0.15f)) { 
+          d->stage = S_EXHALE;
         }
       #else
         if (progress > 0.5f) { d->stage = S_EXHALE; }
@@ -454,11 +450,11 @@ void MAIN start(int param_1) {
       d->asv_target_epap = clamp(d->asv_target_epap, s_epap, s_epap + ASV_MAX_EPAP);
       epap = d->asv_target_epap;
     }
-    // if (toggle) {
-    //   ips = s_ips;
-    //   slope = SLOPE_MIN;
-    //   eps = 0.6f;
-    // }
+    if (toggle) {
+      ips = s_ips;
+      slope = SLOPE_MIN;
+      // eps = 0.6f;
+    }
   #endif
 
   const float IPS_PT_FA = 2.0f;

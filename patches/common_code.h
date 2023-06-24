@@ -45,6 +45,16 @@ const   int *pap_timer = &ivars[0];
 
 #define p_error (fvars[1] - fvars[0x2a]) // Positive when above target
 
+#define sens_trigger fvars[0x7] // (L/min). Possible values: 13.2, 8.1, 4.8, 3.3, 1.8
+#define sens_cycle fvars[0x8] // (%). Possible values: 0.5, 0.35, 0.25, 0.15, 0.08
+
+// S mode configuration
+#define s_ipap fvars[0xe]
+#define s_epap fvars[0xf]
+#define s_ips (s_ipap - s_epap)
+#define s_rise_time_i ivars[0xD] // (80ms). 1, 18, 25, ... 106, 112. Seems to be in an unit of 80ms
+#define s_rise_time_f (s_rise_time_i * 0.008f) // (1s). Ranges from 0.08 to 0.896
+
 // I believe these are the reported EPAP and IPAP written to EDF files.
 // However, they're probably written somewhere else(before end of inspiration), which needs to be debugged to write them
 // Or used to figure out how to add extra signals..?

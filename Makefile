@@ -35,19 +35,19 @@ ventilator-offset := 0x80bb734
 # The graphing is too large to fit directly in the location at 0x8067d2c,
 # so it is in high in the flash and the function pointer is fixed up at 0x80f9c88
 patches/graph.elf: patches/graph.o patches/stubs.o
-graph-offset := 0x80fd000
+graph-offset := 0x80fcd40
 
 patches/squarewave.elf: patches/squarewave.o patches/stubs.o
-squarewave-offset := 0x80fd300
+squarewave-offset := 0x80fd000
 
 patches/squarewave_asv.elf: patches/squarewave_asv.o patches/stubs.o
-squarewave_asv-offset := 0x80fd300
+squarewave_asv-offset := 0x80fd000
 
 patches/squarewave_pav.elf: patches/squarewave_pav.o patches/stubs.o
-squarewave_pav-offset := 0x80fd300
+squarewave_pav-offset := 0x80fd000
 
 patches/easybreathe.elf: patches/easybreathe.o patches/stubs.o
-easybreathe-offset := 0x80fe368
+easybreathe-offset := 0x80fdf00
 
 # If there is a new version of the ghidra XML, the stubs.S
 # file will be regenerated so that the addresses and functions

@@ -51,33 +51,21 @@ int MAIN start(void) {
 	#define HEIGHT_PRES 40
 	#define HEIGHT_FLOW 40
 
-	const float PRESSURE_MAX = 20.0f;
-	const float vscale = (height / PRESSURE_MAX); 
-
 	const float p_min = 5.0f;
 	const float p_max = 15.0f;
-	// const float vscale = HEIGHT_PRES / (p_max - p_min); 
-
 	
 	const unsigned pos_x = (ivars[0] / 10) % width; // ~10px per second (unit of timer is 10ms)
 
 	int pressure = rescale(p_actual, p_min, p_max, HEIGHT_PRES);
 	int command = rescale(p_command, p_min, p_max, HEIGHT_PRES);
 	int error = -p_error * ( HEIGHT_PRES / (p_max-p_min) * 3.0f); // Error 
-	// int error = rescale(p_error, p_min, p_max, HEIGHT_PRES) * 3.0f; // Error 
 
-	#if 0 
-		// Clear pixels with black BGR 
+	if (fvars[0x20] <= 0.5f) { // Active inhale
+		GUI_SetColor(0x101010);
+	} else {
 		GUI_SetColor(0x000000);
-		LCD_FillRect(pos_x, top, pos_x + 8, bottom);
-	#else
-		if (fvars[0x20] <= 0.5f) { // Active inhale
-			GUI_SetColor(0x101010);
-		} else {
-			GUI_SetColor(0x000000);
-		}
-		LCD_FillRect(pos_x, top -1, pos_x + 3, bottom + 1);
-	#endif
+	}
+	LCD_FillRect(pos_x, top -1, pos_x + 3, bottom + 1);
 
 	GUI_SetColor(0x303030);
 	LCD_DrawPixel(pos_x, top);
@@ -86,7 +74,7 @@ int MAIN start(void) {
 
 	float g_top = top + HEIGHT_FLOW;
 	float g_bottom = top + HEIGHT_FLOW + HEIGHT_PRES;
-	float g_vscale = PRESSURE_MAX / HEIGHT_PRES;
+	// float g_vscale = (p_max-p_min) / HEIGHT_PRES;
 
 	#if HEIGHT_PRES > 0
 		// draw 0, 5, 10, 15, 20 very faintly
@@ -108,7 +96,7 @@ int MAIN start(void) {
 
 	g_top = top;
 	g_bottom = top + HEIGHT_FLOW;
-	g_vscale = 1.0f / (HEIGHT_FLOW*2);
+	// g_vscale = 1.0f / (HEIGHT_FLOW*2);
 
 	#if HEIGHT_FLOW > 0
 		GUI_SetColor(0x202020);

@@ -5,8 +5,7 @@
 #define COUNT_PRETRIGGER_FLOW 1 // Include pre-breath-start positive flow values into cumulative volume of current breath
                                 // (maybe important for early calculations, but I think it's likely to underestimate limitations in )
 
-#define CUSTOM_CYCLE 1
-#define JITTER 0
+#define JITTER 1
 
 const float EPS_FLOWBASED_DOWNSLOPE = 0.6f; // Maximum flowbased %
 const float EPS_FIXED_TIME = 1.1f;
@@ -159,28 +158,26 @@ INLINE my_data_t * get_data() {
   return magic_ptr->data;
 }
 
-INLINE void apply_jitter(int8 amt) {
+#if JITTER == 1
+STATIC void apply_jitter(int8 amt) {
   float amtf = 0.005f * amt;
-  *cmd_ps += amtf; *cmd_epap += amtf; *cmd_ipap += amtf;
+  *cmd_ps += amtf; *cmd_epap -= amtf;
 }
+#endif
 
 // This is where the real magic starts
 // The entry point. All other functions MUST be inline
 void MAIN start(int param_1) {
   const float progress = fvars[0x20]; // Inhale(1.6s to 0.5), Exhale(4.5s from 0.5 to 1.0). Seems breath-duration-dependent. Only in S mode
-  const float s_ipap = fvars[0xe];
-  const float s_epap = fvars[0xf];
   const float s_eps = 0.6f;
-  const float s_ips = s_ipap - s_epap;
 
   float epap = s_epap; // (cmH2O)
   float ips = s_ips;   // (cmH2O)
-  float eps = s_eps;    // (cmH2O)
-  float rise_time = 0.70f;       // (s)
-  float fall_time = 0.75f;       // (s)
+  float eps = s_eps;   // (cmH2O)
+  float rise_time = s_rise_time_f;  // (s)
+  float fall_time = 0.75f; // (s)
   float slope = ips / rise_time; // (cmH2O/s) Slope to meet IPS in rise_time milliseconds
 
-  float fot = 0.0f;
 
   float assist_scale = 1.0f;
 
@@ -198,15 +195,15 @@ void MAIN start(int param_1) {
     apply_jitter(-d->last_jitter); // Undo last jitter, to prevent small errors from it from accumulating.
   #endif
 
-  float delta = 0.010f; // It's 10+-0.01ms, basically constant
+  const float delta = 0.010f; // It's 10+-0.01ms, basically constant
   const float flow = *flow_compensated / 60.0f; // (L/s)
-
 
   eps = max((s_epap - 5) * 0.3f, 0.4f);
 
   // Gradually ramp the assist scale up from 40% to 100%
   assist_scale = min(0.4f + max((int)d->breath_count - 2, 0) * 0.1f, 1.0f);
 
+  float fot = 0.0f;
   const int fhw = FOT_HALF_WAVELENGTH;
   if (((*pap_timer * 10) % (fhw*2)) < fhw) {
     // ((float)(d->ticks % fhw) / (float)fhw) 
@@ -221,16 +218,7 @@ void MAIN start(int param_1) {
   } else if ((d->stage == S_INHALE) && (*cmd_ps >= ips*0.99f)) {
     d->stage = S_INHALE_LATE;
   } else if ((d->stage == S_INHALE) || (d->stage == S_INHALE_LATE)) {
-    #if CUSTOM_CYCLE == 1
-      // Cycle off below 0 flow, or after 100ms past configured cycle sensitivity.
-      if (flow < -0.01f * d->current.inh_maxflow) { d->stage = S_EXHALE; }
-      if (progress > 0.5f) { 
-        d->cycle_off_timer += delta;
-        if (d->cycle_off_timer >= 0.95f) { d->stage = S_EXHALE; }
-      }
-    #else
-      if (progress > 0.5f) { d->stage = S_EXHALE; }
-    #endif
+    if (progress > 0.5f) { d->stage = S_EXHALE; }
   } else if ((d->stage == S_EXHALE) && ((d->current.volume / d->current.volume_max) <= 0.1f)) {
     d->stage = S_EXHALE_LATE;
   }

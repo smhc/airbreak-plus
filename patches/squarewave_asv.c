@@ -5,30 +5,29 @@
 #define COUNT_PRETRIGGER_FLOW 0 // Include pre-breath-start positive flow values into cumulative volume of current breath
                                 // (maybe important for early calculations, but I think it's likely to underestimate limitations in )
 
-#define CUSTOM_TRIGGER 0
-#define CUSTOM_CYCLE 2 // 0=stock, 1=-5% or +100ms, 2= stock-15%
+#define CUSTOM_TRIGGER 0 // 0=stock, 1=hybrid flow+pres
+#define CUSTOM_CYCLE 0 // 0=stock, 1=-5% or +100ms, 2= stock-15%
 const float CUSTOM_CYCLE_SENS = -0.05f;
-#define JITTER 2 // 0 = off, 1 = on, 2 = shift epap/ips balance only
+#define JITTER 1
 
 #define ASV 1
-#define ASV_SLOPE 1
+#define ASV_SLOPE 2
 
 #define ASV_DISABLER 1 // Disable ASV after hyperpneas and/or apneas (because all of mine are central, todo: differentiate the two)
-#define ASV_DYNAMIC_GAIN 0
 
-const float IPS_EARLY_DOWNSLOPE = 0.45f; // %
+const float IPS_EARLY_DOWNSLOPE = 0.0f; // (% of IPS)
+const float IPS_EARLY_DOWNSLOPE_START = 0.0f; // (% of max flow)
 
 const float EPS_FLOWBASED_DOWNSLOPE = 0.75f; // Maximum flowbased %
 const float EPS_FIXED_TIME = 1.1f;
 const float EPS_REDUCE_WHEN_ASV = 0.5f; // % of extra IPS to reduce EPS by
 
+#define FOT 0
 const   int FOT_HALF_WAVELENGTH = 3*4; // In ticks, must be a multiple of 4 to save into EDF files correctly.
-const float FOT_AMPLITUDE = 0.2f;
-
-// int a = error_implement_fot();
+const float FOT_AMPLITUDE = 0.15f;
 
 // 20*5*10ms = 1s
-#define ASV_STEP_COUNT 20
+#define ASV_STEP_COUNT 15
 #define ASV_STEP_LENGTH 5
 #define ASV_STEP_SKIP 1 // Amount of steps before first doing ASV adjustments. MUST be at least 1 or code will crash due to out of bounds target array read
 const float ASV_MAX_IPS = 2.0f;
@@ -221,14 +220,10 @@ STATIC float get_disabler_mult(int n) {
 }
 #endif
 
-#if JITTER > 0
+#if JITTER == 1
 STATIC void apply_jitter(int8 amt) {
   float amtf = 0.005f * amt;
-  #if JITTER == 1
-    *cmd_ps += amtf; *cmd_epap += amtf; *cmd_ipap += amtf;
-  #else
-    *cmd_ps += amtf; *cmd_epap -= amtf;
-  #endif
+  *cmd_ps += amtf; *cmd_epap -= amtf;
 }
 #endif
 
@@ -255,20 +250,20 @@ void MAIN start(int param_1) {
   }
 
 
-  #if JITTER > 0
+  #if JITTER == 1
     apply_jitter(-d->last_jitter); // Undo last jitter, to prevent small errors from it from accumulating.
   #endif
 
-  float delta = 0.010f; // It's 10+-0.01ms, basically constant
+  const float delta = 0.010f; // It's 10+-0.01ms, basically constant
   const float flow = *flow_compensated / 60.0f; // (L/s)
   // const float flow2 = f_unfucked / 60.0f; // (L/s)
 
   // eps += max(d->asv_target_epap - s_epap, 0.0f) * ASV_EPAP_EXTRA_EPS;
-  eps = 0.2f + max((max(d->asv_target_epap, s_epap) - 5.0f) * 0.3f, 0.4f);
+  eps = 0.2f + max((max(d->asv_target_epap, s_epap) - 5.0f) * 0.2f, 0.4f);
 
   float slope = ips / s_rise_time; // (cmH2O/s) Slope to meet IPS in s_rise_time milliseconds 
   float SLOPE_MIN = slope; // (cmH2O/s)
-  float SLOPE_MAX = 12.0f; // (cmH2O/s)
+  float SLOPE_MAX = 15.0f; // (cmH2O/s)
 
   ips   = max(d->current.ips, s_ips);
   slope = max(d->current.slope, SLOPE_MIN);
@@ -276,8 +271,8 @@ void MAIN start(int param_1) {
   // Process breath stage logic
   {
     #if CUSTOM_TRIGGER == 1 
-      float sens = 0.5f + 0.5f * map01c(d->current.duration, max(0.9f, d->recent.te * 0.5f), max(1.4f, d->recent.te * 0.85f));
-      int8 start_inhale = ( (flow>-0.08f) * clamp(-p_error / 3.0f, -0.02f, 0.06f) + flow) * sens >= 0.07f;
+      float sens = 0.5f + 0.5f * map01c(d->current.duration, max(1.0f, d->recent.te * 0.5f), max(1.6f, d->recent.te * 0.85f));
+      int8 start_inhale = ( (flow>-0.04f) * clamp(-p_error / 3.0f, 0.0f, 0.04f) + flow) * sens >= (sens_trigger / 60.0f);
       // int8 exhale_done = (d->current.duration > 0.9f);
       // } else if (((d->stage == S_EXHALE) || (d->stage == S_EXHALE_LATE)) && (exhale_done && start_inhale)) {
       if (((d->stage == S_UNINITIALIZED) || (d->stage == S_EXHALE_LATE)) && start_inhale)
@@ -395,12 +390,7 @@ void MAIN start(int param_1) {
       float current_flow = d->current.targets[i] - d->current.targets[i-1];
       float error_flow = current_flow / (recent_flow + 0.001f);
 
-      #if ASV_DYNAMIC_GAIN == 1
-        float base_ips = max(d->current.ips, s_ips);
-        // float base_slope = max(d->current.slope, slope);
-      #else
-        float base_ips = max(d->asv_target_ips, s_ips);
-      #endif
+      float base_ips = max(d->asv_target_ips, s_ips);
       float base_slope = max(d->asv_target_slope, s_slope);
       
       // This way:  95-130% => 0 to -1;  95-50% => 0 to 1
@@ -423,6 +413,13 @@ void MAIN start(int param_1) {
         } else if (ips_adjustment < -0.01f) {
           d->current.slope += max(slope_adjustment - 0.05f, -1.0f) * (base_slope - SLOPE_MIN);
         }
+      #elif ASV_SLOPE == 2
+        const float GAIN = 0.3f * 60.0f; // 18.0f. Convert the ResMed gain factor from cmH2O per (L/min) to (L/s)
+        // const float error_term = (current_flow - recent_flow);
+        const float error_term = (d->current.targets[i] - d->recent.targets[i] * 0.9f);
+        // No need to multiply by ASV_STEP_LENGTH, as the values already are a sum of ASV_STEP_LENGTH steps.
+        d->current.slope += GAIN * error_term * (delta);
+        d->current.slope = clamp(d->current.slope, SLOPE_MIN, SLOPE_MAX);
       #else
         d->current.slope = d->current.ips / s_rise_time;
       #endif
@@ -468,7 +465,6 @@ void MAIN start(int param_1) {
     } else if (d->stage == S_EXHALE) {
       d->hack_pretrigger_ips = 0.0f;
     }
-
   #endif
 
   // Set the commanded PS and EPAP values based on our target
@@ -478,47 +474,41 @@ void MAIN start(int param_1) {
   } else {
     if (d->stage == S_INHALE || d->stage == S_INHALE_LATE) {
       float t = d->current.ti;
+      if (d->stage == S_INHALE) {
+        // if (t < 0.075f) { slope = SLOPE_MAX; }
+        // if (ips - d->ips_fa <= 0.4f) { slope *= 0.66f; }
+        // if (ips - d->ips_fa <= 0.2f) { slope *= 0.66f; }
+        // if (ips - d->ips_fa <= 0.0f) { slope  = 0.0f; }
 
-      #if 0 
-        if (t < 0.075f) { slope = SLOPE_MAX; }
-        if (ips*0.66f - d->ips_fa <= 0.3f) { slope *= 0.5f; }
-        if (ips*0.66f - d->ips_fa <= 0.0f) { slope *= 0.66f; }
-
-        d->ips_fa = min(ips, d->ips_fa + slope * delta ); // Avoid mid-slope PS drops.
-
-        if (t < 0.075f) { slope = SLOPE_MAX; d->ips_fa = slope * 0.07f; }
-
-        *cmd_ps = d->ips_fa;
-      #else 
-        // "Flow Assist"
-        if (d->stage == S_INHALE) {
-          if (t < 0.075f) { slope = SLOPE_MAX; }
-          // if (ips - d->ips_fa <= 0.3f) { slope *= 0.5f; }
-          if (ips - d->ips_fa <= 0.0f) { slope  = 0.0f; }
-
-          d->ips_fa = min(ips, d->ips_fa + slope * delta ); // Avoid mid-slope PS drops.
-          d->hack_minflow = d->current.inh_maxflow;
-        } else { 
-          // This mimics Flow Assist
-          if ((IPS_EARLY_DOWNSLOPE > 0.0f)
-              && (t >= max(d->recent.ti * 0.6f, 0.6f))
-              && (d->current.volume >= d->recent.volume * 0.6f)
-          ) {
-            float ips_drop = IPS_EARLY_DOWNSLOPE * ips;
-            float drop = map01c(min(flow, d->hack_minflow) / d->current.inh_maxflow, 0.6f, 0.05f) * ips_drop;
-            float drop_max = ips_drop / 0.3f * delta; // Assume the fastest we want is reaching the drop in 300ms
-            // d->ips_fa = ips - drop;
-            if (flow >= d->current.inh_maxflow * 0.05f) { // Don't drop when we're already close to 0
-              d->ips_fa = clamp(ips - drop, d->ips_fa - drop_max, ips);
-              d->hack_minflow = min(d->hack_minflow, flow);
-            }
-          } else {
-            d->ips_fa = ips;
-          }
+        if (d->ips_fa >= ips) {
+          slope  = 0.0f;
+        } else if (d->ips_fa >= 0.75f * ips) {
+          slope += (ips*0.25f) / (1.2f - s_rise_time) - SLOPE_MIN;
+        } else {
+          slope -= SLOPE_MIN * 0.25f;
         }
-        *cmd_ps = d->ips_fa;
-      #endif
 
+        d->ips_fa = min(ips, d->ips_fa + slope * delta);
+        d->hack_minflow = d->current.inh_maxflow;
+      } else {
+        // This mimics Flow Assist
+        if ((IPS_EARLY_DOWNSLOPE > 0.0f)
+            && (t >= max(d->recent.ti * 0.6f, 0.6f))
+            && (d->current.volume >= d->recent.volume * 0.6f)
+        ) {
+          float ips_drop = IPS_EARLY_DOWNSLOPE * ips;
+          float drop = map01c(min(flow, d->hack_minflow) / d->current.inh_maxflow, IPS_EARLY_DOWNSLOPE_START, 0.0f) * ips_drop;
+          float drop_max = ips_drop / 0.3f * delta; // Assume the fastest we want is reaching the drop in 300ms
+          // d->ips_fa = ips - drop;
+          if (flow >= d->current.inh_maxflow * 0.05f) { // Don't drop when we're already close to 0
+            d->ips_fa = clamp(ips - drop, d->ips_fa - drop_max, ips);
+            d->hack_minflow = min(d->hack_minflow, flow);
+          }
+        } else {
+          d->ips_fa = ips;
+        }
+      }
+      *cmd_ps = d->ips_fa;
     } else if (d->stage == S_EXHALE || d->stage == S_EXHALE_LATE) { // Exhale
       float t = d->current.te;
       float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.05f, 0.6f);
@@ -538,12 +528,21 @@ void MAIN start(int param_1) {
   //   *cmd_ps = max(*cmd_ps, d->hack_pretrigger_ips);
   // }
 
+  #if FOT == 1
+    const int fhw = FOT_HALF_WAVELENGTH;
+    if (((*pap_timer * 10) % (fhw*2)) < fhw) {
+      *cmd_ps += FOT_AMPLITUDE;
+    } else {
+      *cmd_ps -= FOT_AMPLITUDE;
+    }
+  #endif
+
   // Safeguards against going cray cray
-  *cmd_ps = clamp(*cmd_ps, -eps, s_ips + ASV_MAX_IPS + 1.0f);
+  *cmd_ps = clamp(*cmd_ps, -eps-FOT_AMPLITUDE, s_ips + ASV_MAX_IPS + FOT_AMPLITUDE);
   *cmd_epap = clamp(*cmd_epap, s_epap - 1, s_epap + ASV_MAX_EPAP);
   *cmd_ipap = *cmd_epap + *cmd_ps;
 
-  #if JITTER > 0
+  #if JITTER == 1
     // Necessary to keep graphing code called(I think based on PS change, who cares)
     d->last_jitter ^= 2 - (tim_read_tim5() & 4);
     apply_jitter(d->last_jitter);

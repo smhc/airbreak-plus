@@ -8,9 +8,9 @@
 #define CUSTOM_TRIGGER 0 // 0=stock, 1=hybrid flow+pres
 #define CUSTOM_CYCLE 0 // 0=stock, 1=-5% or +100ms, 2= stock-15%
 const float CUSTOM_CYCLE_SENS = -0.05f;
-#define JITTER 1
+#define JITTER 0
 
-#define ASV 1
+#define ASV 0
 #define ASV_SLOPE 2
 
 #define ASV_DISABLER 1 // Disable ASV after hyperpneas and/or apneas (because all of mine are central, todo: differentiate the two)
@@ -18,7 +18,9 @@ const float CUSTOM_CYCLE_SENS = -0.05f;
 const float IPS_EARLY_DOWNSLOPE = 0.0f; // (% of IPS)
 const float IPS_EARLY_DOWNSLOPE_START = 0.0f; // (% of max flow)
 
-const float EPS_FLOWBASED_DOWNSLOPE = 0.75f; // Maximum flowbased %
+const float IPS_PARTIAL_EASYBREATHE = 0.0f; // (% of IPS)
+
+const float EPS_FLOWBASED_DOWNSLOPE = 0.66f; // Maximum flowbased %
 const float EPS_FIXED_TIME = 1.1f;
 const float EPS_REDUCE_WHEN_ASV = 0.5f; // % of extra IPS to reduce EPS by
 
@@ -233,7 +235,7 @@ void MAIN start(int param_1) {
   const float progress = fvars[0x20]; // Inhale(1.6s to 0.5), Exhale(4.5s from 0.5 to 1.0). Seems breath-duration-dependent. Only in S mode
   const float s_eps = 0.6f;
   const float s_rise_time = s_rise_time_f;       // (s)
-  const float s_fall_time = 0.65f;       // (s)
+  const float s_fall_time = 0.9f;       // (s)
   const float s_slope = s_ips / s_rise_time;
 
   float epap = s_epap; // (cmH2O)
@@ -259,7 +261,8 @@ void MAIN start(int param_1) {
   // const float flow2 = f_unfucked / 60.0f; // (L/s)
 
   // eps += max(d->asv_target_epap - s_epap, 0.0f) * ASV_EPAP_EXTRA_EPS;
-  eps = 0.2f + max((max(d->asv_target_epap, s_epap) - 5.0f) * 0.2f, 0.4f);
+  // eps = 0.2f + max((max(d->asv_target_epap, s_epap) - 5.0f) * 0.2f, 0.4f);
+  eps = 0.6f;
 
   float slope = ips / s_rise_time; // (cmH2O/s) Slope to meet IPS in s_rise_time milliseconds 
   float SLOPE_MIN = slope; // (cmH2O/s)
@@ -475,17 +478,21 @@ void MAIN start(int param_1) {
     if (d->stage == S_INHALE || d->stage == S_INHALE_LATE) {
       float t = d->current.ti;
       if (d->stage == S_INHALE) {
-        // if (t < 0.075f) { slope = SLOPE_MAX; }
-        // if (ips - d->ips_fa <= 0.4f) { slope *= 0.66f; }
-        // if (ips - d->ips_fa <= 0.2f) { slope *= 0.66f; }
-        // if (ips - d->ips_fa <= 0.0f) { slope  = 0.0f; }
+        if (t <= 0.050f) { slope *= 0.707f; }
+        if (t <= 0.100f) { slope *= 0.707f; }
 
-        if (d->ips_fa >= ips) {
-          slope  = 0.0f;
-        } else if (d->ips_fa >= 0.75f * ips) {
-          slope += (ips*0.25f) / (1.2f - s_rise_time) - SLOPE_MIN;
+        if (IPS_PARTIAL_EASYBREATHE > 0.0f) {
+          if (d->ips_fa >= ips) {
+            slope  = 0.0f;
+          } else if (d->ips_fa >= (1-IPS_PARTIAL_EASYBREATHE) * ips) {
+            slope += (ips*IPS_PARTIAL_EASYBREATHE) / (1.2f - s_rise_time) - SLOPE_MIN;
+          } else {
+            slope -= SLOPE_MIN * IPS_PARTIAL_EASYBREATHE;
+          }
         } else {
-          slope -= SLOPE_MIN * 0.25f;
+          if (d->ips_fa >= ips - 0.4f) { slope *= 0.66f; }
+          if (d->ips_fa >= ips - 0.2f) { slope *= 0.66f; }
+          if (d->ips_fa >= ips) { slope  = 0.0f; }
         }
 
         d->ips_fa = min(ips, d->ips_fa + slope * delta);

@@ -8,7 +8,7 @@
 #define CUSTOM_TRIGGER 0 // 0=stock, 1=hybrid flow+pres
 #define CUSTOM_CYCLE 0 // 0=stock, 1=-5% or +100ms, 2= stock-15%
 const float CUSTOM_CYCLE_SENS = -0.05f;
-#define JITTER 0
+#define JITTER 1
 
 #define ASV 0
 #define ASV_SLOPE 2
@@ -18,7 +18,7 @@ const float CUSTOM_CYCLE_SENS = -0.05f;
 const float IPS_EARLY_DOWNSLOPE = 0.0f; // (% of IPS)
 const float IPS_EARLY_DOWNSLOPE_START = 0.0f; // (% of max flow)
 
-const float IPS_PARTIAL_EASYBREATHE = 0.0f; // (% of IPS)
+const float IPS_PARTIAL_EASYBREATHE = 0.25f; // (% of IPS)
 
 const float EPS_FLOWBASED_DOWNSLOPE = 0.66f; // Maximum flowbased %
 const float EPS_FIXED_TIME = 1.1f;
@@ -275,7 +275,8 @@ void MAIN start(int param_1) {
   {
     #if CUSTOM_TRIGGER == 1 
       float sens = 0.5f + 0.5f * map01c(d->current.duration, max(1.0f, d->recent.te * 0.5f), max(1.6f, d->recent.te * 0.85f));
-      int8 start_inhale = ( (flow>-0.04f) * clamp(-p_error / 3.0f, 0.0f, 0.04f) + flow) * sens >= (sens_trigger / 60.0f);
+      float pressure_term = (flow>-0.04f) * clamp(-p_error-0.05f, 0.0f, 0.15f) * 0.33f; // neg 0.05-0.20 -> 0-0.066
+      int8 start_inhale = ( pressure_term + flow) * sens >= (sens_trigger / 60.0f);
       // int8 exhale_done = (d->current.duration > 0.9f);
       // } else if (((d->stage == S_EXHALE) || (d->stage == S_EXHALE_LATE)) && (exhale_done && start_inhale)) {
       if (((d->stage == S_UNINITIALIZED) || (d->stage == S_EXHALE_LATE)) && start_inhale)
@@ -481,7 +482,7 @@ void MAIN start(int param_1) {
         if (t <= 0.050f) { slope *= 0.707f; }
         if (t <= 0.100f) { slope *= 0.707f; }
 
-        if (IPS_PARTIAL_EASYBREATHE > 0.0f) {
+        if ((IPS_PARTIAL_EASYBREATHE > 0.0f) && (toggle == 0) ) {
           if (d->ips_fa >= ips) {
             slope  = 0.0f;
           } else if (d->ips_fa >= (1-IPS_PARTIAL_EASYBREATHE) * ips) {

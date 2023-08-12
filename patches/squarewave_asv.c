@@ -7,10 +7,10 @@
 
 #define CUSTOM_TRIGGER 0 // 0=stock, 1=hybrid flow+pres
 #define CUSTOM_CYCLE 0 // 0=stock, 1=-5% or +100ms, 2= stock-15%
-const float CUSTOM_CYCLE_SENS = -0.05f;
+const float CUSTOM_CYCLE_SENS = 0.0f;
 #define JITTER 1
 
-#define ASV 0
+#define ASV 1
 #define ASV_SLOPE 2
 
 #define ASV_DISABLER 1 // Disable ASV after hyperpneas and/or apneas (because all of mine are central, todo: differentiate the two)
@@ -20,7 +20,7 @@ const float IPS_EARLY_DOWNSLOPE_START = 0.0f; // (% of max flow)
 
 const float IPS_PARTIAL_EASYBREATHE = 0.25f; // (% of IPS)
 
-const float EPS_FLOWBASED_DOWNSLOPE = 0.66f; // Maximum flowbased %
+const float EPS_FLOWBASED_DOWNSLOPE = 0.5f; // Maximum flowbased %
 const float EPS_FIXED_TIME = 1.1f;
 const float EPS_REDUCE_WHEN_ASV = 0.5f; // % of extra IPS to reduce EPS by
 
@@ -29,12 +29,12 @@ const   int FOT_HALF_WAVELENGTH = 3*4; // In ticks, must be a multiple of 4 to s
 const float FOT_AMPLITUDE = 0.15f;
 
 // 20*5*10ms = 1s
-#define ASV_STEP_COUNT 15
+#define ASV_STEP_COUNT 20
 #define ASV_STEP_LENGTH 5
 #define ASV_STEP_SKIP 1 // Amount of steps before first doing ASV adjustments. MUST be at least 1 or code will crash due to out of bounds target array read
-const float ASV_MAX_IPS = 2.0f;
+const float ASV_MAX_IPS = 1.0f;
 const float ASV_GAIN = 3.0f; // 4.0f seems fine but maybe a bit aggressive?
-const float ASV_MAX_EPAP = 0.0f;
+const float ASV_MAX_EPAP = 0.6f;
 const float ASV_EPAP_EXTRA_EPS = 0.2f; // How much extra EPS per EPAP
 
 
@@ -66,7 +66,7 @@ typedef struct {
   float ips;
   float slope;
   #if ASV == 1
-    float targets[ASV_STEP_COUNT];
+    float16 targets[ASV_STEP_COUNT];
   #endif 
 } breath_t;
 
@@ -274,9 +274,14 @@ void MAIN start(int param_1) {
   // Process breath stage logic
   {
     #if CUSTOM_TRIGGER == 1 
+
+      // float tr_flow = map01c(flow, 0.0f, sens_trigger / 60.0f);
+      // float tr_pres = map01c(p_error, -0.05f, -0.20f) * (tr_flow > 0.0f) * 0.5f;
+      // TODO: Only do the pressure term if cmd_ps >= 0
+
       float sens = 0.5f + 0.5f * map01c(d->current.duration, max(1.0f, d->recent.te * 0.5f), max(1.6f, d->recent.te * 0.85f));
-      float pressure_term = (flow>-0.04f) * clamp(-p_error-0.05f, 0.0f, 0.15f) * 0.33f; // neg 0.05-0.20 -> 0-0.066
-      int8 start_inhale = ( pressure_term + flow) * sens >= (sens_trigger / 60.0f);
+      float pressure_term = (flow>-0.04f) * (*cmd_ps >= -0.02f) * clamp(-p_error-0.05f, 0.0f, 0.25f) * 0.2f; // neg 0.05-0.20 -> 0-0.066
+      int8 start_inhale = ( pressure_term + flow) * sens >= (sens_trigger / 60.0f + 0.025f);
       // int8 exhale_done = (d->current.duration > 0.9f);
       // } else if (((d->stage == S_EXHALE) || (d->stage == S_EXHALE_LATE)) && (exhale_done && start_inhale)) {
       if (((d->stage == S_UNINITIALIZED) || (d->stage == S_EXHALE_LATE)) && start_inhale)
@@ -290,7 +295,7 @@ void MAIN start(int param_1) {
       d->hack_earlyvol = d->current.volume;
     } else if ((d->stage == S_INHALE) || (d->stage == S_INHALE_LATE)) {
       #if CUSTOM_CYCLE == 1
-        const int8 do_cycle = (flow / d->current.inh_maxflow) <= CUSTOM_CYCLE_SENS;
+        const int8 do_cycle = (flow / d->current.inh_maxflow) <= (sens_cycle-CUSTOM_CYCLE_SENS);
         // Cycle off below 0 flow, or after 100ms past configured cycle sensitivity.
         if (do_cycle) { d->stage = S_EXHALE; }
         if (progress > 0.5f) { 
@@ -298,13 +303,13 @@ void MAIN start(int param_1) {
           if (d->cycle_off_timer >= 0.95f) { d->stage = S_EXHALE; }
         }
       #elif CUSTOM_CYCLE == 2
-        if ( (flow / d->current.inh_maxflow) <= (sens_cycle-0.15f)) { 
+        if ( (flow / d->current.inh_maxflow) <= (sens_cycle-CUSTOM_CYCLE_SENS)) { 
           d->stage = S_EXHALE;
         }
       #else
         if (progress > 0.5f) { d->stage = S_EXHALE; }
       #endif
-    } else if ((d->stage == S_EXHALE) && ((d->current.volume / d->current.volume_max) <= 0.1f)) {
+    } else if ((d->stage == S_EXHALE) && ((d->current.volume / d->current.volume_max) <= 0.2f)) {
       d->stage = S_EXHALE_LATE;
     }
   };
@@ -340,7 +345,7 @@ void MAIN start(int param_1) {
 
     d->ticks = 0;
     d->breath_count += 1;
-    d->dont_support = ((d->current.volume / d->current.volume_max) > 0.20f) && (d->current.te > 0.055f) && (d->current.te <= 1.2f);
+    d->dont_support = ((d->current.volume / d->current.volume_max) > 0.20f) && (d->current.te > 0.300f) && (d->current.te <= 1.2f);
 
     d->cycle_off_timer = 0.0f;
     d->final_ips = 0.0f;
@@ -418,7 +423,7 @@ void MAIN start(int param_1) {
           d->current.slope += max(slope_adjustment - 0.05f, -1.0f) * (base_slope - SLOPE_MIN);
         }
       #elif ASV_SLOPE == 2
-        const float GAIN = 0.3f * 60.0f; // 18.0f. Convert the ResMed gain factor from cmH2O per (L/min) to (L/s)
+        const float GAIN = 0.6f * 60.0f; // 36.0f. Convert 2x the ResMed gain factor from cmH2O per (L/min) to (L/s)
         // const float error_term = (current_flow - recent_flow);
         const float error_term = (d->current.targets[i] - d->recent.targets[i] * 0.9f);
         // No need to multiply by ASV_STEP_LENGTH, as the values already are a sum of ASV_STEP_LENGTH steps.
@@ -481,6 +486,7 @@ void MAIN start(int param_1) {
       if (d->stage == S_INHALE) {
         if (t <= 0.050f) { slope *= 0.707f; }
         if (t <= 0.100f) { slope *= 0.707f; }
+        if (t >= 0.150f && t <= 0.300f) { slope *= 1.377f; }
 
         if ((IPS_PARTIAL_EASYBREATHE > 0.0f) && (toggle == 0) ) {
           if (d->ips_fa >= ips) {
@@ -525,7 +531,7 @@ void MAIN start(int param_1) {
       float ips_mult = map01c(t, s_fall_time, 0.0f); ips_mult = ips_mult * ips_mult * 0.95f;
       if (EPS_FLOWBASED_DOWNSLOPE > 0.0f) {
         float temp = EPS_FLOWBASED_DOWNSLOPE;
-        ips_mult = min(ips_mult, ips_mult * (1.0f-temp) + temp * map01c(flow, -d->current.inh_maxflow * 0.9f, 0.0f) );
+        ips_mult = min(ips_mult, ips_mult * (1.0f-temp) + temp * map01c(flow, -d->current.inh_maxflow * 0.9f, sens_cycle * d->current.inh_maxflow) );
       }
       *cmd_ps = ips_mult * d->final_ips - (1.0f - ips_mult) * eps_mult * eps;
     }

@@ -199,23 +199,27 @@ TODO: Try replacing with a call to pressure_scale_not_called
 
 # How to debug 
 
--2. Open the binary in Ghidra, setting the architecture to ARM Cortex little-endian
+1. Open the binary in Ghidra, setting the architecture to ARM Cortex little-endian
 
--1.5. Open it in debugger view
+2. Open it in debugger view
 
--1. In the Window->Memory Map, create maps for the flash, its mirror, and ram based on datasheet - https://github.com/NationalSecurityAgency/ghidra/issues/2578#issuecomment-749561510
+3. In the Window->Memory Map tool, create maps for the flash, its mirror, and ram based on datasheet - https://github.com/NationalSecurityAgency/ghidra/issues/2578#issuecomment-749561510
 
--0.5. Analyse
+4. Analyse code
 
-0. Create a new debugger(gdb-multiarch) connection in "Debugger Targets" pane
+5. Install gdb-multiarch, openocd, and connect to the running device as normal
 
-1. target remote localhost:3333
+6. In Ghidra, create a new debugger(gdb-multiarch) connection in "Debugger Targets" pane
 
-2. Click Record on the process in inferiors in Objects panel/tab, arch: ARM Cortex little
+7. target remote localhost:3333
 
-3. Resume execution
+8. Click Record on the process in inferiors in Objects panel/tab, arch: ARM Cortex little
 
-4. In modules click the button "Map the current trace toblabla"
+9. Resume execution
+
+10. In the Modules panel, click the button "Map the current trace to blabla".
+
+11. Now you can set breakpoints, watchpoints, and whenever they're hit, Ghidra will show you where in the binary it happened
 
 ### Runs always
  - runs_during_operation_and_cooldown - 0x0808291c

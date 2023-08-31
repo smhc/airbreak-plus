@@ -1,6 +1,8 @@
 #include "stubs.h"
 #include "common_code.h"
 
+// TODO: Partial easybreathe lower
+
 #define HISTORY_LENGTH 15
 #define COUNT_PRETRIGGER_FLOW 0 // Include pre-breath-start positive flow values into cumulative volume of current breath
                                 // (maybe important for early calculations, but I think it's likely to underestimate limitations in )
@@ -18,9 +20,9 @@ const float CUSTOM_CYCLE_SENS = 0.0f;
 const float IPS_EARLY_DOWNSLOPE = 0.0f; // (% of IPS)
 const float IPS_EARLY_DOWNSLOPE_START = 0.0f; // (% of max flow)
 
-const float IPS_PARTIAL_EASYBREATHE = 0.25f; // (% of IPS)
+const float IPS_PARTIAL_EASYBREATHE = 0.5f; // (% of IPS)
 
-const float EPS_FLOWBASED_DOWNSLOPE = 0.5f; // Maximum flowbased %
+const float EPS_FLOWBASED_DOWNSLOPE = 0.25f; // Maximum flowbased %
 const float EPS_FIXED_TIME = 1.1f;
 const float EPS_REDUCE_WHEN_ASV = 0.5f; // % of extra IPS to reduce EPS by
 
@@ -32,9 +34,9 @@ const float FOT_AMPLITUDE = 0.15f;
 #define ASV_STEP_COUNT 20
 #define ASV_STEP_LENGTH 5
 #define ASV_STEP_SKIP 1 // Amount of steps before first doing ASV adjustments. MUST be at least 1 or code will crash due to out of bounds target array read
-const float ASV_MAX_IPS = 1.0f;
+const float ASV_MAX_IPS = 1.5f;
 const float ASV_GAIN = 3.0f; // 4.0f seems fine but maybe a bit aggressive?
-const float ASV_MAX_EPAP = 0.6f;
+const float ASV_MAX_EPAP = 1.0f;
 const float ASV_EPAP_EXTRA_EPS = 0.2f; // How much extra EPS per EPAP
 
 
@@ -326,7 +328,7 @@ void MAIN start(int param_1) {
     float rel_ips = max(d->current.ips - s_ips, 0.0f) / ASV_MAX_IPS;
     if (ASV_MAX_EPAP > 0.0f) {
       float rel_epap = max(d->asv_target_epap - s_epap, 0.0f) / ASV_MAX_EPAP;
-      d->asv_target_epap_target = d->asv_target_epap + (map01c(rel_ips, 0.25f, 1.0f) * (1.0f - rel_epap) - map01c(rel_ips, 0.25f, 0.0f) * rel_epap) * ASV_MAX_EPAP;
+      d->asv_target_epap_target = d->asv_target_epap + (map01c(rel_ips, 0.25f, 1.0f) * (1.0f - rel_epap) - map01c(rel_ips, 0.20f, 0.0f) * rel_epap) * ASV_MAX_EPAP;
       d->asv_target_epap_target = clamp(d->asv_target_epap_target, s_epap, s_epap + ASV_MAX_EPAP);
       // d->asv_target_epap_target = s_epap + map01c(d->current.ips, s_ips, s_ips + ASV_MAX_IPS) * ASV_MAX_EPAP;
     }
@@ -425,7 +427,10 @@ void MAIN start(int param_1) {
       #elif ASV_SLOPE == 2
         const float GAIN = 0.6f * 60.0f; // 36.0f. Convert 2x the ResMed gain factor from cmH2O per (L/min) to (L/s)
         // const float error_term = (current_flow - recent_flow);
-        const float error_term = (d->current.targets[i] - d->recent.targets[i] * 0.9f);
+        float error_term = (d->current.targets[i] - d->recent.targets[i] * 0.95f);
+
+        error_term += sign(error_term) * 0.02f; // A little bit extra so the adjustments aren't too tiny to reach the target. Worst case might oscillate
+
         // No need to multiply by ASV_STEP_LENGTH, as the values already are a sum of ASV_STEP_LENGTH steps.
         d->current.slope += GAIN * error_term * (delta);
         d->current.slope = clamp(d->current.slope, SLOPE_MIN, SLOPE_MAX);
@@ -451,7 +456,7 @@ void MAIN start(int param_1) {
       if (d->asv_target_epap < d->asv_target_epap_target) {
         d->asv_target_epap += 0.025f * delta; // 40s to change by 1cmH2O
       } else {
-        d->asv_target_epap -= 0.0125f * delta; // 1m20s to drop by 1cmH2O
+        d->asv_target_epap -= 0.01f * delta; // 1m20s to drop by 1cmH2O
       }
       d->asv_target_epap = clamp(d->asv_target_epap, s_epap, s_epap + ASV_MAX_EPAP);
       epap = d->asv_target_epap;
@@ -484,10 +489,21 @@ void MAIN start(int param_1) {
     if (d->stage == S_INHALE || d->stage == S_INHALE_LATE) {
       float t = d->current.ti;
       if (d->stage == S_INHALE) {
-        if (t <= 0.050f) { slope *= 0.707f; }
-        if (t <= 0.100f) { slope *= 0.707f; }
-        if (t >= 0.150f && t <= 0.300f) { slope *= 1.377f; }
+        #if 1 
+        float tmp= IPS_PARTIAL_EASYBREATHE;
 
+
+        if (t <= 0.051f) { slope -= 0.333f * SLOPE_MIN * (1-tmp); }
+        if (t <= 0.101f) { slope -= 0.333f * SLOPE_MIN * (1-tmp); }
+
+        if ((IPS_PARTIAL_EASYBREATHE > 0.0f) && (toggle == 0) ) {
+          slope = slope - (tmp * SLOPE_MIN) + ips/1.2f * tmp;
+          // if (d->ips_fa >= (1-tmp) * ips) {
+          if (t >= s_rise_time + 0.049f) {
+            slope -= SLOPE_MIN * (1-tmp);
+          }
+        }
+        #else 
         if ((IPS_PARTIAL_EASYBREATHE > 0.0f) && (toggle == 0) ) {
           if (d->ips_fa >= ips) {
             slope  = 0.0f;
@@ -496,7 +512,9 @@ void MAIN start(int param_1) {
           } else {
             slope -= SLOPE_MIN * IPS_PARTIAL_EASYBREATHE;
           }
-        } else {
+        }
+        #endif
+        else {
           if (d->ips_fa >= ips - 0.4f) { slope *= 0.66f; }
           if (d->ips_fa >= ips - 0.2f) { slope *= 0.66f; }
           if (d->ips_fa >= ips) { slope  = 0.0f; }

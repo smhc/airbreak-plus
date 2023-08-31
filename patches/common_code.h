@@ -88,6 +88,8 @@ const   int *pap_timer = &ivars[0];
   _a > __max ? __max : (_a < __min ? __min : a); \
 })
 
+#define sign(a) ({a >= 0 ? 1 : -1; })
+
 // STATIC float clamp01(float a) { return clamp(a, 0.0f, 1.0f); }
 
 STATIC float map01(float s, float start, float end) {

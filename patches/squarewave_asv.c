@@ -8,8 +8,8 @@
                                 // (maybe important for early calculations, but I think it's likely to underestimate limitations in )
 
 #define CUSTOM_TRIGGER 0 // 0=stock, 1=hybrid flow+pres
-#define CUSTOM_CYCLE 0 // 0=stock, 1=-5% or +100ms, 2= stock-15%
-const float CUSTOM_CYCLE_SENS = 0.0f;
+#define CUSTOM_CYCLE 1 // 0=stock, 1=based on mean, not max flow (compensates for non-easybreathe spikes
+
 #define JITTER 1
 
 #define ASV 1
@@ -273,8 +273,17 @@ void MAIN start(int param_1) {
   ips   = max(d->current.ips, s_ips);
   slope = max(d->current.slope, SLOPE_MIN);
 
+
+
   // Process breath stage logic
+  float cycle_threshold = sens_cycle * d->current.inh_maxflow;
   {
+    #if CUSTOMC_CYCLE == 1
+      if (d->current.ti > 0.0f) {
+        cycle_threshold = sens_cycle * (d->current.volume_max / d->current.ti) * 0.9f;
+      }
+    #endif
+  
     #if CUSTOM_TRIGGER == 1 
 
       // float tr_flow = map01c(flow, 0.0f, sens_trigger / 60.0f);
@@ -297,17 +306,7 @@ void MAIN start(int param_1) {
       d->hack_earlyvol = d->current.volume;
     } else if ((d->stage == S_INHALE) || (d->stage == S_INHALE_LATE)) {
       #if CUSTOM_CYCLE == 1
-        const int8 do_cycle = (flow / d->current.inh_maxflow) <= (sens_cycle-CUSTOM_CYCLE_SENS);
-        // Cycle off below 0 flow, or after 100ms past configured cycle sensitivity.
-        if (do_cycle) { d->stage = S_EXHALE; }
-        if (progress > 0.5f) { 
-          d->cycle_off_timer += delta;
-          if (d->cycle_off_timer >= 0.95f) { d->stage = S_EXHALE; }
-        }
-      #elif CUSTOM_CYCLE == 2
-        if ( (flow / d->current.inh_maxflow) <= (sens_cycle-CUSTOM_CYCLE_SENS)) { 
-          d->stage = S_EXHALE;
-        }
+        if (flow <= cycle_threshold) { d->stage = S_EXHALE; }
       #else
         if (progress > 0.5f) { d->stage = S_EXHALE; }
       #endif
@@ -389,6 +388,7 @@ void MAIN start(int param_1) {
       d->history.flow[d->ticks % HISTORY_LENGTH] = flow;
     }
   };
+
 
   #if ASV == 1
     int i = d->ticks/ASV_STEP_LENGTH;
@@ -549,7 +549,7 @@ void MAIN start(int param_1) {
       float ips_mult = map01c(t, s_fall_time, 0.0f); ips_mult = ips_mult * ips_mult * 0.95f;
       if (EPS_FLOWBASED_DOWNSLOPE > 0.0f) {
         float temp = EPS_FLOWBASED_DOWNSLOPE;
-        ips_mult = min(ips_mult, ips_mult * (1.0f-temp) + temp * map01c(flow, -d->current.inh_maxflow * 0.9f, sens_cycle * d->current.inh_maxflow) );
+        ips_mult = min(ips_mult, ips_mult * (1.0f-temp) + temp * map01c(flow, -d->current.inh_maxflow * 0.9f, cycle_threshold) );
       }
       *cmd_ps = ips_mult * d->final_ips - (1.0f - ips_mult) * eps_mult * eps;
     }

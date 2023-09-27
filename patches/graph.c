@@ -51,8 +51,8 @@ int MAIN start(void) {
 	#define HEIGHT_PRES 40
 	#define HEIGHT_FLOW 40
 
-	const float p_min = 5.0f;
-	const float p_max = 15.0f;
+	const float p_min = 0.0f;
+	const float p_max = 20.0f;
 	
 	const unsigned pos_x = (ivars[0] / 10) % width; // ~10px per second (unit of timer is 10ms)
 

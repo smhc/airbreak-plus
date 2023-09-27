@@ -1,6 +1,7 @@
 #include "stubs.h"
 #include "common_code.h"
 
+// Ctrl+F 'FIXME'
 // TODO: Rework ASV IPS gain towards something more rational
 // TODO: Add second ASV IPS limit, for total maximum
 // TODO: Early part of perc_rise should be faster
@@ -29,7 +30,7 @@ const float EPS_REDUCE_WHEN_ASV = 0.5f; // % of extra IPS to reduce EPS by
 #define ASV_STEP_LENGTH 5
 #define ASV_STEP_SKIP 1 // Amount of steps before first doing ASV adjustments. MUST be at least 1 or code will crash due to out of bounds target array read
 const float ASV_MAX_IPS = 2.0f; // within one breath
-const float ASV_GAIN = 3.0f; // 4.0f seems fine but maybe a bit aggressive?
+const float ASV_GAIN = 40.0f; // (cmH2O/s at 50% flow deficit)
 const float ASV_MAX_EPAP = 1.0f;
 const float ASV_EPAP_EXTRA_EPS = 0.2f; // How much extra EPS per EPAP
 
@@ -161,7 +162,7 @@ STATIC my_data_t * get_data() {
   if (magic_ptr->magic != MAGIC) {
     magic_ptr->data = malloc(sizeof(my_data_t));
   }
-  unsigned now = tim_read_tim5();
+  const unsigned now = tim_read_tim5();
   // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.
   if ((magic_ptr->magic != MAGIC) || (now - magic_ptr->data->last_time) > 100000) {
     init_my_data(magic_ptr->data);
@@ -183,7 +184,7 @@ STATIC float get_disabler_mult(int n) {
 
 #if JITTER == 1
 STATIC void apply_jitter(int8 amt) {
-  float amtf = 0.005f * amt;
+  const float amtf = 0.005f * amt;
   *cmd_ps += amtf; *cmd_epap -= amtf;
 }
 #endif
@@ -194,7 +195,7 @@ void MAIN start(int param_1) {
   const float progress = fvars[0x20]; // Inhale(1.6s to 0.5), Exhale(4.5s from 0.5 to 1.0). Seems breath-duration-dependent. Only in S mode
   const float s_eps = 0.6f;
   const float s_rise_time = s_rise_time_f;       // (s)
-  const float s_fall_time = 0.75f;       // (s)
+  const float s_fall_time = 0.8f;       // (s)
 
   float epap = s_epap; // (cmH2O)
   float ips = s_ips;   // (cmH2O)
@@ -223,7 +224,7 @@ void MAIN start(int param_1) {
   // Process breath stage logic
   float cycle_threshold = sens_cycle * d->current.inh_maxflow;
   {
-    #if CUSTOMC_CYCLE == 1
+    #if CUSTOM_CYCLE == 1
       if (d->current.ti > 0.0f) {
         cycle_threshold = sens_cycle * (d->current.volume_max / d->current.ti) * 1.15f;
       }
@@ -236,16 +237,15 @@ void MAIN start(int param_1) {
 
       float sens = 0.5f + 0.5f * map01c(d->current.te, max(1.0f, d->recent.te * 0.5f), max(1.6f, d->recent.te * 0.85f));
       float pressure_term = (flow>-0.04f) * (*cmd_ps >= -0.02f) * clamp(-p_error-0.05f, 0.0f, 0.25f) * 0.2f; // neg 0.05-0.20 -> 0-0.066
-      int8 start_inhale = ( pressure_term + flow) * sens >= (sens_trigger / 60.0f + 0.025f);
-      if (((d->stage == S_UNINITIALIZED) || (d->stage == S_EXHALE_LATE)) && start_inhale)
+      int8 inspiratory_trigger = ( pressure_term + flow) * sens >= (sens_trigger / 60.0f + 0.025f);
+      inspiratory_trigger &&=  ((d->stage == S_UNINITIALIZED) || (d->stage == S_EXHALE_LATE));
     #else
-      if (d->last_progress > progress + 0.25f) // Stock inhale trigger
+      int8 inspiratory_trigger = (d->last_progress > progress + 0.25f); // Stock inhale trigger
     #endif
-    {
+    if (inspiratory_trigger) {
         d->stage = S_START_INHALE;
     } else if ((d->stage == S_INHALE) && (*cmd_ps >= ips*0.98f)) {
       d->stage = S_INHALE_LATE;
-
     } else if ((d->stage == S_INHALE) || (d->stage == S_INHALE_LATE)) {
       #if CUSTOM_CYCLE == 1
         if (flow <= cycle_threshold) { d->stage = S_EXHALE; }
@@ -266,7 +266,7 @@ void MAIN start(int param_1) {
     }}
 
     // 0-25% asvIPS -> go down; 25-100% asvIPS -> go up 
-    float rel_ips = max(d->current.ips - s_ips, 0.0f) / ASV_MAX_IPS;
+    const float rel_ips = max(d->current.ips - s_ips, 0.0f) / ASV_MAX_IPS;
     if (ASV_MAX_EPAP > 0.0f) {
       float rel_epap = max(d->asv_target_epap - s_epap, 0.0f) / ASV_MAX_EPAP;
       d->asv_target_epap_target = d->asv_target_epap + (map01c(rel_ips, 0.25f, 1.0f) * (1.0f - rel_epap) - map01c(rel_ips, 0.20f, 0.0f) * rel_epap) * ASV_MAX_EPAP;
@@ -317,7 +317,7 @@ void MAIN start(int param_1) {
 
     if ((d->ticks % ASV_STEP_LENGTH == 0) && (i>=ASV_STEP_SKIP) && (i<ASV_STEP_COUNT) && (d->stage == S_INHALE)) {
       d->current.targets[i] = d->current.volume;
-      float error_volume = d->current.targets[i] / (d->recent.targets[i] + 0.001f);
+      const float error_volume = d->current.targets[i] / (d->recent.targets[i] + 0.001f);
       // float recent_flow = d->recent.targets[i] - d->recent.targets[i-1];
       // float current_flow = d->current.targets[i] - d->current.targets[i-1];
       // float error_flow = current_flow / (recent_flow + 0.001f);
@@ -328,14 +328,16 @@ void MAIN start(int param_1) {
         d->current.ips = s_ips;
       #endif
 
-      // This way:  95-130% => 0 to -1;  95-50% => 0 to 1
-      float ips_adjustment = map01c(error_volume, 0.94f, 0.5f) - map01c(error_volume, 0.96f, 1.3f);
+      // This way:  95-140% => 0 to -1;  95-50% => 0 to 1
+      const float ips_adjustment = map01c(error_volume, 0.94f, 0.5f) - map01c(error_volume, 0.96f, 1.4f);
+      const float dt_asv = delta * ASV_STEP_LENGTH;
 
+      // FIXME: Change the gain to something sane, probably delta-based
       // The 0.05f values ensure the adjustment is not super tiny.
       if (ips_adjustment > 0.01f) {
-        d->current.ips += min(ips_adjustment + 0.05f, 1.0f) * ASV_GAIN;
+        d->current.ips += min(ips_adjustment + 0.05f, 1.0f) * ASV_GAIN * dt_asv;
       } else if (ips_adjustment < -0.01f) {
-        d->current.ips += max(ips_adjustment - 0.05f, -1.0f) * (d->current.ips - s_ips);
+        d->current.ips += max(ips_adjustment - 0.05f, -1.0f) * ASV_GAIN * dt_asv; // (d->current.ips - s_ips) * 3.0f 
       }
       d->current.ips = s_ips + get_disabler_mult(d->asv_disable) * (d->current.ips - s_ips);
       d->current.ips = clamp(d->current.ips, s_ips, s_ips + ASV_MAX_IPS);
@@ -371,18 +373,21 @@ void MAIN start(int param_1) {
     inplace(interp, cmd_ps, 0.0f, 3.0f * delta);
   } else {
     if (d->stage == S_INHALE || d->stage == S_INHALE_LATE) {
-      float t = d->current.ti;
+      const float t = d->current.ti;
       if (d->stage == S_INHALE) {
-        float perc = map01c(t, 0.100f, 0.5f * s_rise_time + 0.100f) * (1.0f-IPS_PARTIAL_EASYBREATHE) * 0.6f;
-        perc += map01c(t, 0.100f + 0.5f * s_rise_time, s_rise_time + 0.100f) * (1.0f-IPS_PARTIAL_EASYBREATHE) * 0.4f;
-        perc += map01c(t, 0.0f, 1.2f) * IPS_PARTIAL_EASYBREATHE;
+
+        // FIXME: A sawtooth shape, not very useful, also deformed by the ASV function
+        // float perc = map01c(t, 0.100f, 0.5f * s_rise_time + 0.100f) * (1.0f-IPS_PARTIAL_EASYBREATHE) * 0.6f;
+        // perc += map01c(t, 0.100f + 0.5f * s_rise_time, s_rise_time + 0.100f) * (1.0f-IPS_PARTIAL_EASYBREATHE) * 0.4f;
+        // perc += map01c(t, 0.0f, 1.2f) * IPS_PARTIAL_EASYBREATHE;
+        float perc = map01c(t, 0.05f, s_rise_time + 0.05f);
 
         *cmd_ps = ips * perc;
       } else {
         *cmd_ps = ips;
       }
     } else if (d->stage == S_EXHALE || d->stage == S_EXHALE_LATE) { // Exhale
-      float t = d->current.te;
+      const float t = d->current.te;
       float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.05f, 0.6f);
       eps_mult = min(eps_mult, map01c(t, EPS_FIXED_TIME, 0.4f));
 

@@ -97,6 +97,8 @@ float map01c(float s, float start, float end);
 
 float interp(float from, float to, float coeff);
 
+void *get_pointer(int index, int size);
+
 // Usage example: `inplace(max, &a, b)`
 #define inplace(fn, ptr, args...) ({ \
   __typeof__ (ptr) _ptr = (ptr); \

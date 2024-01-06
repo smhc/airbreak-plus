@@ -42,11 +42,6 @@ const char S_INHALE_LATE  = 3; // After peak flow has been reached
 const char S_EXHALE = 4; // Active exhale
 const char S_EXHALE_LATE  = 5; // Expiratory pause
 
-
-STATIC float interp(float from, float to, float coeff) {
-   return from + (to - from) * coeff;
-}
-
 // Setup storage for important data
 typedef struct {
   float volume;

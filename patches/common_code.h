@@ -16,25 +16,25 @@ typedef __fp16 float16;
 
 
 // PAP memory addresses
-float * const fvars = (void*) 0x2000e948;
-int * const ivars = (void*) 0x2000e750;
+static float * const fvars = (void*) 0x2000e948;
+static int * const ivars = (void*) 0x2000e750;
 
-float *cmd_ps = &fvars[0x29]; // (cmH2O)
-float *cmd_epap = &fvars[0x28]; // (cmH2O)
-float *cmd_ipap = &fvars[0x2a]; // (cmH2O) This is set to epap+ps somewhere else, no point in writing directly to it
+static float *cmd_ps = &fvars[0x29]; // (cmH2O)
+static float *cmd_epap = &fvars[0x28]; // (cmH2O)
+static float *cmd_ipap = &fvars[0x2a]; // (cmH2O) This is set to epap+ps somewhere else, no point in writing directly to it
 
-const float *leak_basal = &fvars[0x22]; // I believe this to be basal unintentional leak (L/min)
-const float *leak = &fvars[0x24]; // Unintentional leak (L/min) - this is what flow_compensated incorporates
+static const float *leak_basal = &fvars[0x22]; // I believe this to be basal unintentional leak (L/min)
+static const float *leak = &fvars[0x24]; // Unintentional leak (L/min) - this is what flow_compensated incorporates
 // const float *leak_b = &fvars[0x23]; // Also unintentional leak, but smaller amplitude, unsure of significance
 
-const float *flow_raw = &fvars[0x3]; // (L/min)
-const float *flow_patient = &fvars[0x0]; // (L/min)
-const float *flow_compensated = &fvars[0x25]; // (L/min)
+static const float *flow_raw = &fvars[0x3]; // (L/min)
+static const float *flow_patient = &fvars[0x0]; // (L/min)
+static const float *flow_compensated = &fvars[0x25]; // (L/min)
 // const float *flow_delayed = &fvars[0x26]; // Slightly delayed 0x25 ?
 
-const float *actual_pressure = &fvars[1]; // (cmH2O) Actual current pressure in the circuit
-const   int *therapy_mode = &ivars[0x6f]; // It's 0 when device is inactive
-const   int *pap_timer = &ivars[0];
+static const float *actual_pressure = &fvars[1]; // (cmH2O) Actual current pressure in the circuit
+static const   int *therapy_mode = &ivars[0x6f]; // It's 0 when device is inactive
+static const   int *pap_timer = &ivars[0];
 
 #define f_patient (fvars[0x0])
 #define f_compensated (fvars[0x25])
@@ -92,15 +92,10 @@ const   int *pap_timer = &ivars[0];
 
 // STATIC float clamp01(float a) { return clamp(a, 0.0f, 1.0f); }
 
-STATIC float map01(float s, float start, float end) {
-   return (s - start)/(end-start);
-}
+float map01(float s, float start, float end);
+float map01c(float s, float start, float end);
 
-// Version that clamps to 0-1
-STATIC float map01c(float s, float start, float end) {
-   return clamp( map01(s, start, end), 0.0f, 1.0f );
-}
-
+float interp(float from, float to, float coeff);
 
 // Usage example: `inplace(max, &a, b)`
 #define inplace(fn, ptr, args...) ({ \

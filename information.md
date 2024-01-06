@@ -51,6 +51,22 @@ add more mode entries, set config 0x0 mask to all bits high
 default is 0x3, which only enables mode 1 (CPAP) and 2 (AutoSet)
 ```
 
+## Information about tasks
+
+
+```
+         Blower off: 0,    2,                          11,             15,     17,     19
+  CPAP (EPR on/off): 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,     12, 13,     15, 16, 17, 18,     20
+   Autoset/APAP/Her: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,     12, 13, 14, 15, 16, 17, 18,         21
+              VAuto: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,     12, 13, 14, 15,     17,                 22
+        S (Easy on): 0,    2, 3, 4, 5, 6, 7, 8, 9, 10,     12, 13,     15,     17,                     23
+ST/PAC/S (Easy off): 0,    2, 3, 4, 5, 6, 7, 8, 9, 10,         13,     15,     17,                     23
+                ASV: 0, 1, 2, 3, 4, 5, 6, 7, 8,    10,         13,     15,     17,                         24
+            ASVAuto: 0, 1, 2, 3, 4, 5, 6, 7, 8,    10,         13, 14, 15,     17,                         24
+              iVAPS: 0,    2, 3, 4, 5, 6, 7, 8, 9, 10,         13,     15,     17,                             25
+```
+
+
 ## Pressure computation funcs:
 
 pressure_only_in_mode_2_and_3
@@ -286,3 +302,5 @@ Colors in
 080dde38 writes fvars 0xe S_IPAP
 
 GUI_DispString - used to display the "Therapy" header, and others I presume
+
+graph.c is called from function `0x08067bba`, at `0x0x8067bd0`, in turn called from `0x80d8c1a`, then thread fuckery happens

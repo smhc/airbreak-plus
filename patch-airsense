@@ -85,6 +85,10 @@ patch_code_ventilator() {
 	patch_direct patches/ventilator.bin 0xbb734
 }
 
+patch_code_common() {
+	echo "Patching common_code.c"
+	patch_direct patches/common_code.bin 0xfe000
+}
 
 patch_code_graph() {
 	echo "Patching graphing code"
@@ -126,6 +130,7 @@ patch_code() {
 	if [[ $PATCH_CODE == 1 ]] ; then
 		BUILD_FLAGS=$(( BUILD_FLAGS | (1 << 0) ))
 		echo "Patching code"
+		patch_code_common
 		patch_code_graph
 		if [[ $PATCH_S_ASV == 1 ]] ; then
 			patch_code_squarewave_asv

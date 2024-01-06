@@ -11,9 +11,9 @@
 #define CUSTOM_TRIGGER 0 // 0=stock, 1=hybrid flow+pres
 #define CUSTOM_CYCLE 1 // 0=stock, 1=based on mean, not max flow (compensates for non-easybreathe spikes
 
-#define JITTER 1 // Necessary for graphing code to run properly. Shouldn't affect performance.
+#define JITTER 0 // Necessary for graphing code to run properly. Shouldn't affect performance.
 
-#define ASV 1
+#define ASV 0
 #define ASV_DYNAMIC_GAIN 1 // Keep ramping IPS up within-breath until target is met
 const float ASV_IPS_TARGET_ADJUSTMENT = 0.5f; // (%) how much baseline target IPS adjusts towards last breath's final IPS value
 
@@ -380,7 +380,7 @@ void MAIN start(int param_1) {
         // float perc = map01c(t, 0.100f, 0.5f * s_rise_time + 0.100f) * (1.0f-IPS_PARTIAL_EASYBREATHE) * 0.6f;
         // perc += map01c(t, 0.100f + 0.5f * s_rise_time, s_rise_time + 0.100f) * (1.0f-IPS_PARTIAL_EASYBREATHE) * 0.4f;
         // perc += map01c(t, 0.0f, 1.2f) * IPS_PARTIAL_EASYBREATHE;
-        float perc = map01c(t, 0.05f, s_rise_time + 0.05f);
+        float perc = map01c(t, 0.0f, s_rise_time);
 
         *cmd_ps = ips * perc;
       } else {

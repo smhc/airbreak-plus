@@ -1,4 +1,5 @@
 #include "common_code.h"
+#include "stubs.h"
 
 float map01(float s, float start, float end) {
    return (s - start)/(end-start);
@@ -20,7 +21,7 @@ typedef struct {
   void** pointers;
 } magic_ptr_t;
 
-magic_ptr_t * const magic_ptr = (void*) (0x200007f8);
+magic_ptr_t * const magic_ptr = (void*) (0x20000be0);
 const unsigned MAGIC = 0x07E49001;
 
 void *get_pointer(int index, int size) {
@@ -38,3 +39,5 @@ void *get_pointer(int index, int size) {
 
   return magic_ptr->pointers[index];
 }
+
+// 0be0, 2978, 2980, 4560

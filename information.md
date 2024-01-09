@@ -304,3 +304,23 @@ Colors in
 GUI_DispString - used to display the "Therapy" header, and others I presume
 
 graph.c is called from function `0x08067bba`, at `0x0x8067bd0`, in turn called from `0x80d8c1a`, then thread fuckery happens
+
+
+pressure_check_something(0x080bc1a8) -> pressure_scale_not_called(0x080bc51c) -> pressure_work(0x080bc080) -> writes cmd_ps
+Wrapping pressure_work seems Easy-Breathe specific, but breaks stuff
+
+
+`pressure_limit_max_difference` is where IPAP is set to EPAP+PS across different modes. Runs after all tasks.
+
+// From original easybreathe.c attempt:
+
+// Takes place of `compute_pressure_stuff_replaced_with_breath`
+// It appears to replace all other modes...??
+
+// Not an option:
+//  - compute_pressure_stuff_replaced_with_breath - runs in multiple modes, breaks S when replaced.
+//  - pressure_work - breaks S when replaced
+//  - pressure_timed_ramp - doesn't seem to do anything
+//  - pressure_target_normal_operation - doesn't seem to do anything
+// Try:
+// - pressure_check_something - writes maybe-PS to fvars[0x90]

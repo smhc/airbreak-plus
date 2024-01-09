@@ -6,13 +6,10 @@ all: stm32-patched.bin stm32-asv.bin stm32-patched-asv.bin # stm32-pav.bin
 stm32-patched.bin: patch-airsense patches/common_code.bin patches/graph.bin patches/squarewave.bin
 	export PATCH_CODE=1 && export PATCH_S=1 && ./patch-airsense stm32.bin $@
 
-stm32-asv.bin: patch-airsense patches/common_code.bin patches/graph.bin patches/squarewave_asv.bin patches/asv_task_wrapper.bin
-	export PATCH_CODE=1 && export PATCH_S_ASV=1 && export PATCH_ASV_TASK_WRAPPER=1 && ./patch-airsense stm32.bin $@
+stm32-asv.bin: patch-airsense patches/common_code.bin patches/graph.bin patches/squarewave_asv.bin patches/asv_task_wrapper.bin patches/wrapper_limit_max_pdiff.bin
+	export PATCH_CODE=1 && export PATCH_S_ASV=1 && export PATCH_ASV_TASK_WRAPPER=1 && export PATCH_VAUTO_WRAPPER=1 && ./patch-airsense stm32.bin $@
 
-# stm32-patched-asv.bin: patch-airsense
-# 	export PATCH_BACKUP_RATE=1 && ./patch-airsense stm32.bin $@
-
-binaries: patches/common_code.bin patches/ventilator.bin patches/graph.bin patches/squarewave.bin patches/squarewave_asv.bin patches/asv_task_wrapper.bin
+binaries: patches/common_code.bin patches/ventilator.bin patches/graph.bin patches/squarewave.bin patches/squarewave_asv.bin patches/asv_task_wrapper.bin patches/wrapper_limit_max_pdiff.bin
 
 serve:
 	mkdocs serve
@@ -53,12 +50,13 @@ squarewave_asv-extra := --just-symbols=patches/common_code.elf
 # patches/squarewave_pav.elf: patches/squarewave_pav.o patches/common_code.o patches/stubs.o
 # squarewave_pav-offset := 0x80fd000
 
-# patches/easybreathe.elf: patches/easybreathe.o patches/common_code.o patches/stubs.o
-# easybreathe-offset := 0x80fdf00
-
 patches/asv_task_wrapper.elf: patches/asv_task_wrapper.o patches/stubs.o
 asv_task_wrapper-offset := 0x80fdf00
 asv_task_wrapper-extra := --just-symbols=patches/common_code.elf
+
+patches/wrapper_limit_max_pdiff.elf: patches/wrapper_limit_max_pdiff.o patches/stubs.o
+wrapper_limit_max_pdiff-offset := 0x80fe380
+wrapper_limit_max_pdiff-extra := --just-symbols=patches/common_code.elf
 
 # If there is a new version of the ghidra XML, the stubs.S
 # file will be regenerated so that the addresses and functions

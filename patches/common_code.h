@@ -23,6 +23,8 @@ static float *cmd_ps = &fvars[0x29]; // (cmH2O)
 static float *cmd_epap = &fvars[0x28]; // (cmH2O)
 static float *cmd_ipap = &fvars[0x2a]; // (cmH2O) This is set to epap+ps somewhere else, no point in writing directly to it
 
+# define p_epap_incl_ramp (fvars[0x2d]) // (cmH2O)
+
 static const float *leak_basal = &fvars[0x22]; // I believe this to be basal unintentional leak (L/min)
 static const float *leak = &fvars[0x24]; // Unintentional leak (L/min) - this is what flow_compensated incorporates
 // const float *leak_b = &fvars[0x23]; // Also unintentional leak, but smaller amplitude, unsure of significance
@@ -34,6 +36,15 @@ static const float *flow_compensated = &fvars[0x25]; // (L/min)
 
 static const float *actual_pressure = &fvars[1]; // (cmH2O) Actual current pressure in the circuit
 static const   int *therapy_mode = &ivars[0x6f]; // It's 0 when device is inactive
+// Values of therapy_mode:
+// 0 - Inactive
+// 1 - CPAP
+// 2 - APAP / AutoSet / AutoSet For Her
+// 3 - VAuto
+// 4 - S (EasyBreathe=Off) / ST / PAC
+// 6 - iVAPS
+// 8 - S (EasyBreathe=On)
+// 9 - ASV / ASVAuto
 static const   int *pap_timer = &ivars[0];
 
 #define f_patient (fvars[0x0])
@@ -90,7 +101,16 @@ static const   int *pap_timer = &ivars[0];
 
 #define sign(a) ({a >= 0 ? 1 : -1; })
 
+// Usage example: `inplace(max, &a, b)`
+#define inplace(fn, ptr, args...) ({ \
+  __typeof__ (ptr) _ptr = (ptr); \
+  *_ptr = fn(*_ptr, args); \
+})
+
 // STATIC float clamp01(float a) { return clamp(a, 0.0f, 1.0f); }
+
+//////////////////////////////////////
+// Functions implemented in .c file //
 
 float map01(float s, float start, float end);
 float map01c(float s, float start, float end);
@@ -98,12 +118,6 @@ float map01c(float s, float start, float end);
 float interp(float from, float to, float coeff);
 
 void *get_pointer(int index, int size);
-
-// Usage example: `inplace(max, &a, b)`
-#define inplace(fn, ptr, args...) ({ \
-  __typeof__ (ptr) _ptr = (ptr); \
-  *_ptr = fn(*_ptr, args); \
-})
 
 
 #endif

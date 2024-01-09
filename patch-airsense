@@ -93,7 +93,6 @@ patch_code_common() {
 patch_code_graph() {
 	echo "Patching graphing code"
 	patch_pointer patches/graph.bin 0xfcd40 0xf9c88 '\x41\xcd\x0f\x08'
-	# patch_pointer patches/graph.bin 0xfd000 0xf9c88 '\x01\xd0\x0f\x08'
 }
 
 # Replaces not_called_during_loop
@@ -111,19 +110,14 @@ patch_code_squarewave_asv() {
 # 	patch_pointer patches/squarewave_pav.bin 0xfd000 0xf9778 '\x01\xd0\x0f\x08'
 # }
 
-
-# patch_code_easybreathe() {
-# 	die "Patching this function not allowed, shit goes haywire, not sure why"
-# 	patch_pointer patches/easybreathe.bin 0xfdf00 0xf886c '\x01\xdf\x0f\x08' # Replaces `pressure_work`
-# 	# patch_pointer patches/easybreathe.bin 0xfdf00 0xf96e8 '\x01\xdf\x0f\x08' # Replaces `compute_pressure_stuff_replaced_with_breath`
-# 	# This replaces an instruction that jumps to `pressure_timed_ramp` with a jump to `0xfdf00`
-# 	# To change, use Ghidra to patch the instruction and copy the modified bytes to the printf 
-# 	# printf '\x42\xf0\xe6\xf8' | patch 0xbbd30 || die " patching failed"
-# }
-
 patch_code_asv_task_wraper() {
 	echo "Patching ASV task wrapper"
 	patch_pointer patches/asv_task_wrapper.bin 0xfdf00 0xf44e0 '\x01\xdf\x0f\x08'
+}
+
+patch_wrapper_limit_max_pdiff() {
+	echo "Patching wrapper for pressure_limit_max_diff"
+	patch_pointer patches/wrapper_limit_max_pdiff.bin 0xfe380 0xf93d0 '\x81\xe3\x0f\x08'
 }
 
 patch_code() {
@@ -141,7 +135,9 @@ patch_code() {
 		if [[ $PATCH_ASV_TASK_WRAPPER == 1 ]] ; then
 			patch_code_asv_task_wraper
 		fi
-		# patch_code_easybreathe
+		if [[ $PATCH_VAUTO_WRAPPER == 1 ]] ; then
+			patch_wrapper_limit_max_pdiff
+		fi
 	fi
 }
 

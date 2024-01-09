@@ -144,27 +144,16 @@ STATIC void asv_interp_all(my_data_t* data) {
   inplace(interp, &recent->te, current->te, coeff);
 }
 
-
-// Awful hacky code for storing arbitrary data
-typedef struct {
-  unsigned magic;
-  my_data_t * data;
-} magic_ptr_t;
-
-magic_ptr_t * const magic_ptr = (void*) (0x2000e948 + 0x11*4);
-const unsigned MAGIC = 0x07E49001;
 STATIC my_data_t * get_data() {
-  if (magic_ptr->magic != MAGIC) {
-    magic_ptr->data = malloc(sizeof(my_data_t));
-  }
+  my_data_t *ptr = get_pointer(0, sizeof(my_data_t));
+  
   const unsigned now = tim_read_tim5();
   // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.
-  if ((magic_ptr->magic != MAGIC) || (now - magic_ptr->data->last_time) > 100000) {
-    init_my_data(magic_ptr->data);
+  if ((now - ptr->last_time) > 100000) {
+    init_my_data(ptr);
   }
-  magic_ptr->data->last_time = now; // Keep it updated so we don't reset the struct
-  magic_ptr->magic = MAGIC;
-  return magic_ptr->data;
+  ptr->last_time = now; // Keep it updated so we don't reset the struct
+  return ptr;
 }
 
 #if ASV == 1

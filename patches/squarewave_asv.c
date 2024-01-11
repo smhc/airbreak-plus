@@ -6,8 +6,6 @@
 // TODO: Add second ASV IPS limit, for total maximum
 // TODO: Early part of perc_rise should be faster
 
-#define HISTORY_LENGTH 15
-
 #define CUSTOM_TRIGGER 0 // 0=stock, 1=hybrid flow+pres
 #define CUSTOM_CYCLE 1 // 0=stock, 1=based on mean, not max flow (compensates for non-easybreathe spikes
 

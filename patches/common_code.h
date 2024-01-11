@@ -73,7 +73,6 @@ static const   int *pap_timer = &ivars[0];
 // float *report_ipap = &fvars[0xC4];
 // b9, be might be TV, ba, bb might be MV 
 
-
 // const float *asv_epap_min = &fvars[0x11];
 // const float *asv_epap_max = &fvars[0x10];
 // const float *asv_ips_min  = &fvars[0x14];
@@ -99,6 +98,8 @@ static const   int *pap_timer = &ivars[0];
   _a > __max ? __max : (_a < __min ? __min : a); \
 })
 
+#define clamp01(a) ({ clamp(a, 0.0f, 1.0f) })
+
 #define sign(a) ({a >= 0 ? 1 : -1; })
 
 // Usage example: `inplace(max, &a, b)`
@@ -107,17 +108,32 @@ static const   int *pap_timer = &ivars[0];
   *_ptr = fn(*_ptr, args); \
 })
 
-// STATIC float clamp01(float a) { return clamp(a, 0.0f, 1.0f); }
 
 //////////////////////////////////////
 // Functions implemented in .c file //
 
 float map01(float s, float start, float end);
-float map01c(float s, float start, float end);
-
+float map01c(float s, float start, float end); // Version that clamps to 0-1
 float interp(float from, float to, float coeff);
 
+#define POINTERS_MAX 8
+#define POINTERS_SPECIAL 1 // Pointers with negative indices not meant to be accessed through `get_pointer`
 void *get_pointer(int index, int size);
 
+
+///////////////////////////
+// History functionality //
+
+#define HISTORY_LENGTH 16
+
+typedef struct {
+  int tick;
+  float last_time;
+  float16 flow[HISTORY_LENGTH];
+} history_t;
+
+void init_history(history_t *hist);
+void update_history(history_t *hist);
+history_t *get_history();
 
 #endif

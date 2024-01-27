@@ -66,6 +66,13 @@ ST/PAC/S (Easy off): 0,    2, 3, 4, 5, 6, 7, 8, 9, 10,         13,     15,     1
               iVAPS: 0,    2, 3, 4, 5, 6, 7, 8, 9, 10,         13,     15,     17,                             25
 ```
 
+task_3: 0x080eb8de (+1 ptr at 000f4c18) type void(void)
+task_8: weird NOP-like thing (bx lr)
+task_10: weird NOP-like thing (bx lr)
+task_13: 0x080e8bac (+1 ptr at f4534), type void(int)
+task_15: 0x080f0784 (+1 ptr at f4cc0), type void(int)
+task_17: weird NOP-like thing (bx lr)
+
 
 ## Pressure computation funcs:
 

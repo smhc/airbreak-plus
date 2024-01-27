@@ -9,8 +9,6 @@
 #define CUSTOM_TRIGGER 0 // 0=stock, 1=hybrid flow+pres
 #define CUSTOM_CYCLE 1 // 0=stock, 1=based on mean, not max flow (compensates for non-easybreathe spikes
 
-#define JITTER 0 // Necessary for graphing code to run properly. Shouldn't affect performance.
-
 #define ASV 0
 #define ASV_DYNAMIC_GAIN 1 // Keep ramping IPS up within-breath until target is met
 const float ASV_IPS_TARGET_ADJUSTMENT = 0.5f; // (%) how much baseline target IPS adjusts towards last breath's final IPS value
@@ -78,7 +76,6 @@ typedef struct {
   uint32 breath_count;
 
   int16 ticks; // Starts at 0, +1 each call
-  int8 last_jitter;
   int8 dont_support;
   int8 asv_disable;
   int8 stage;
@@ -99,7 +96,6 @@ STATIC void init_my_data(my_data_t *data) {
   data->breath_count = 0;
 
   data->ticks = -1; // Uninitialized
-  data->last_jitter = 0;
   data->dont_support = 0;
   data->asv_disable = 0;
   data->stage = S_UNINITIALIZED;
@@ -143,7 +139,7 @@ STATIC void asv_interp_all(my_data_t* data) {
 }
 
 STATIC my_data_t * get_data() {
-  my_data_t *ptr = get_pointer(0, sizeof(my_data_t));
+  my_data_t *ptr = get_pointer(PTR_SQUAREWAVE_DATA, sizeof(my_data_t));
   
   const unsigned now = tim_read_tim5();
   // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.
@@ -164,17 +160,9 @@ STATIC float get_disabler_mult(int n) {
 }
 #endif
 
-#if JITTER == 1
-STATIC void apply_jitter(int8 amt) {
-  const float amtf = 0.005f * amt;
-  *cmd_ps += amtf; *cmd_epap -= amtf;
-}
-#endif
-
 // This is where the real magic starts
 // The entry point. All other functions **must** be marked INLINE or STATIC
 void MAIN start(int param_1) {
-  const float progress = fvars[0x20]; // Inhale(1.6s to 0.5), Exhale(4.5s from 0.5 to 1.0). Seems breath-duration-dependent. Only in S mode
   const float s_eps = 0.6f;
   const float s_rise_time = s_rise_time_f;       // (s)
   const float s_fall_time = 0.8f;       // (s)
@@ -188,10 +176,6 @@ void MAIN start(int param_1) {
   // Binary toggle if IPAP ends in 0.2 or 0.8
   const float a = (s_ipap - (int)s_ipap);
   const int8 toggle = (((a >= 0.1f) && (a <= 0.3f)) || ((a >= 0.7f) && (a <= 0.9f)));
-
-  #if JITTER == 1
-    apply_jitter(-d->last_jitter); // Undo last jitter, to prevent small errors from it from accumulating.
-  #endif
 
   const float delta = 0.010f; // It's 10+-0.01ms, basically constant
   const float flow = *flow_compensated / 60.0f; // (L/s)
@@ -222,7 +206,7 @@ void MAIN start(int param_1) {
       int8 inspiratory_trigger = ( pressure_term + flow) * sens >= (sens_trigger / 60.0f + 0.025f);
       inspiratory_trigger &&=  ((d->stage == S_UNINITIALIZED) || (d->stage == S_EXHALE_LATE));
     #else
-      int8 inspiratory_trigger = (d->last_progress > progress + 0.25f); // Stock inhale trigger
+      int8 inspiratory_trigger = (d->last_progress > breath_progress + 0.25f); // Stock inhale trigger
     #endif
     if (inspiratory_trigger) {
         d->stage = S_START_INHALE;
@@ -232,7 +216,7 @@ void MAIN start(int param_1) {
       #if CUSTOM_CYCLE == 1
         if (flow <= cycle_threshold) { d->stage = S_EXHALE; }
       #else
-        if (progress > 0.5f) { d->stage = S_EXHALE; }
+        if (breath_progress > 0.5f) { d->stage = S_EXHALE; }
       #endif
     } else if ((d->stage == S_EXHALE) && ((d->current.volume / d->current.volume_max) <= 0.2f)) {
       d->stage = S_EXHALE_LATE;
@@ -381,18 +365,12 @@ void MAIN start(int param_1) {
       *cmd_ps = ips_mult * d->final_ips - (1.0f - ips_mult) * eps_mult * eps;
     }
   }
-  d->last_progress = progress;
+  d->last_progress = breath_progress;
 
   // Safeguards against going cray cray
   *cmd_ps = clamp(*cmd_ps, -eps, s_ips + ASV_MAX_IPS);
   *cmd_epap = clamp(*cmd_epap, s_epap, s_epap + ASV_MAX_EPAP);
   *cmd_ipap = *cmd_epap + *cmd_ps;
-
-  #if JITTER == 1
-    // Necessary to keep graphing code called(I think based on PS change, who cares)
-    d->last_jitter ^= 2 - (tim_read_tim5() & 4);
-    apply_jitter(d->last_jitter);
-  #endif
 
   return;
 }

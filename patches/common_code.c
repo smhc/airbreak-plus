@@ -1,6 +1,14 @@
 #include "common_code.h"
 #include "stubs.h"
 
+float map(float s, float start, float end, float new_start, float new_end) {
+  return new_start + map01(s, start, end) * (new_end - new_start);
+}
+
+float mapc(float s, float start, float end, float new_start, float new_end) {
+  return clamp( map(s, start, end, new_start, new_end), new_start, new_end);
+}
+
 float map01(float s, float start, float end) {
    return (s - start)/(end-start);
 }
@@ -23,15 +31,15 @@ typedef struct {
 magic_ptr_t * const magic_ptr = (void*) (0x20000be0); 
 const unsigned MAGIC = 0x07E49001;
 
-void *get_pointer(int index, int size) {
+void *get_pointer(ptr_index index, int size) {
+  const int max_pointers = __PTR_LAST;
   if (magic_ptr->magic != MAGIC) {
-    magic_ptr->pointers = malloc(sizeof(void*) * (POINTERS_MAX+POINTERS_SPECIAL));
+    magic_ptr->pointers = malloc(sizeof(void*) * max_pointers);
     magic_ptr->magic = MAGIC;
-    for(int i=0; i<POINTERS_MAX+POINTERS_SPECIAL; i++) {
+    for(int i=0; i<max_pointers; i++) {
       magic_ptr->pointers[i] = 0;
     }
   }
-  index += POINTERS_SPECIAL; // Special pointers have negative indices
   if (magic_ptr->pointers[index] == 0) {
     magic_ptr->pointers[index] = malloc(size);
   }
@@ -44,6 +52,7 @@ void init_history(history_t *hist) {
     hist->flow[i] = 0.0f;
   }
   hist->tick = -1;
+  hist->last_jitter = 0;
 }
 
 void update_history(history_t *hist) {
@@ -57,7 +66,18 @@ void update_history(history_t *hist) {
 }
 
 history_t *get_history() { 
-  return get_pointer(-1, sizeof(history_t));
+  return get_pointer(PTR_HISTORY, sizeof(history_t));
 
 }
 
+
+void apply_jitter(bool undo) {
+  history_t *hist = get_history();
+  if (undo) { // Get new jitter value
+    hist->last_jitter *= -1;
+  } else { // Undo the previous
+    hist->last_jitter = 2 - (tim_read_tim5() % 5);
+  }
+  const float amtf = 0.005f * hist->last_jitter;
+  *cmd_ps += amtf; *cmd_epap_ramp -= amtf;
+}

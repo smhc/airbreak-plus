@@ -13,6 +13,7 @@ typedef unsigned int uint32;
 typedef signed short int16;
 typedef signed char int8;
 typedef __fp16 float16;
+typedef enum { false, true } bool;
 
 
 // PAP memory addresses
@@ -23,7 +24,7 @@ static float *cmd_ps = &fvars[0x29]; // (cmH2O)
 static float *cmd_epap = &fvars[0x28]; // (cmH2O)
 static float *cmd_ipap = &fvars[0x2a]; // (cmH2O) This is set to epap+ps somewhere else, no point in writing directly to it
 
-# define p_epap_incl_ramp (fvars[0x2d]) // (cmH2O)
+static float *cmd_epap_ramp = &fvars[0x2d]; // (cmH2O) 
 
 static const float *leak_basal = &fvars[0x22]; // I believe this to be basal unintentional leak (L/min)
 static const float *leak = &fvars[0x24]; // Unintentional leak (L/min) - this is what flow_compensated incorporates
@@ -47,6 +48,8 @@ static const   int *therapy_mode = &ivars[0x6f]; // It's 0 when device is inacti
 // 9 - ASV / ASVAuto
 static const   int *pap_timer = &ivars[0];
 
+#define breath_progress (fvars[0x20]) // Inhale(0.0 to 0.5), Exhale(0.5 to 1.0). Breath duration-dependent. Works in S, VAuto modes, but not ASV
+
 #define f_patient (fvars[0x0])
 #define f_compensated (fvars[0x25])
 #define f_unfucked (fvars[0x0] - fvars[0x22])
@@ -56,6 +59,7 @@ static const   int *pap_timer = &ivars[0];
 
 #define p_error (fvars[1] - fvars[0x2a]) // Positive when above target
 
+// These seem to be universal across modes, e.g. S, VAuto, etc.
 #define sens_trigger fvars[0x7] // (L/min). Possible values: 13.2, 8.1, 4.8, 3.3, 1.8
 #define sens_cycle fvars[0x8] // (%). Possible values: 0.5, 0.35, 0.25, 0.15, 0.08
 
@@ -65,6 +69,15 @@ static const   int *pap_timer = &ivars[0];
 #define s_ips (s_ipap - s_epap)
 #define s_rise_time_i ivars[0xD] // (80ms). 1, 18, 25, ... 106, 112. Seems to be in an unit of 80ms
 #define s_rise_time_f (s_rise_time_i * 0.008f) // (1s). Ranges from 0.08 to 0.896
+// VAuto mode configuration
+#define vauto_max_ipap fvars[0x9]
+#define vauto_epap fvars[0xa]
+#define vauto_ps fvars[0xb]
+#define vauto_ipap (vauto_epap + vauto_ps)
+// 0x91 seems to contain epap-derived value
+
+#define ti_min (ivars[0x5]*10) // (ms) integer
+#define ti_max (ivars[0x6]*10) // (ms) integer
 
 // I believe these are the reported EPAP and IPAP written to EDF files.
 // However, they're probably written somewhere else(before end of inspiration), which needs to be debugged to write them
@@ -112,13 +125,20 @@ static const   int *pap_timer = &ivars[0];
 //////////////////////////////////////
 // Functions implemented in .c file //
 
+float map(float s, float start, float end, float new_start, float new_end);
+float mapc(float s, float start, float end, float new_start, float new_end); // Clamped to new_start-new_end
 float map01(float s, float start, float end);
 float map01c(float s, float start, float end); // Version that clamps to 0-1
 float interp(float from, float to, float coeff);
 
-#define POINTERS_MAX 8
-#define POINTERS_SPECIAL 1 // Pointers with negative indices not meant to be accessed through `get_pointer`
-void *get_pointer(int index, int size);
+typedef enum {
+  PTR_HISTORY,
+  PTR_SQUAREWAVE_DATA,
+
+  __PTR_LAST,
+} ptr_index;
+
+void *get_pointer(ptr_index index, int size);
 
 
 ///////////////////////////
@@ -128,6 +148,7 @@ void *get_pointer(int index, int size);
 
 typedef struct {
   int tick;
+  int8 last_jitter;
   float last_time;
   float16 flow[HISTORY_LENGTH];
 } history_t;
@@ -135,5 +156,7 @@ typedef struct {
 void init_history(history_t *hist);
 void update_history(history_t *hist);
 history_t *get_history();
+
+void apply_jitter(bool undo);
 
 #endif

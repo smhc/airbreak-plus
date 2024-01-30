@@ -31,7 +31,7 @@ typedef struct {
 magic_ptr_t * const magic_ptr = (void*) (0x20000be0); 
 const unsigned MAGIC = 0x07E49001;
 
-void *get_pointer(ptr_index index, int size) {
+void *get_pointer(ptr_index index, int size, void (*init_fn)(void*)) {
   const int max_pointers = __PTR_LAST;
   if (magic_ptr->magic != MAGIC) {
     magic_ptr->pointers = malloc(sizeof(void*) * max_pointers);
@@ -42,6 +42,7 @@ void *get_pointer(ptr_index index, int size) {
   }
   if (magic_ptr->pointers[index] == 0) {
     magic_ptr->pointers[index] = malloc(size);
+    init_fn(magic_ptr->pointers[index]);
   }
   return magic_ptr->pointers[index];
 }
@@ -66,8 +67,7 @@ void update_history(history_t *hist) {
 }
 
 history_t *get_history() { 
-  return get_pointer(PTR_HISTORY, sizeof(history_t));
-
+  return GET_PTR(PTR_HISTORY, history_t, init_history);
 }
 
 

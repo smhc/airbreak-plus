@@ -139,7 +139,7 @@ STATIC void asv_interp_all(my_data_t* data) {
 }
 
 STATIC my_data_t * get_data() {
-  my_data_t *ptr = get_pointer(PTR_SQUAREWAVE_DATA, sizeof(my_data_t));
+  my_data_t *ptr = GET_PTR(PTR_SQUAREWAVE_DATA, my_data_t, init_my_data);
   
   const unsigned now = tim_read_tim5();
   // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.

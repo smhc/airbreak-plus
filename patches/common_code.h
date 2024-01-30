@@ -121,6 +121,9 @@ static const   int *pap_timer = &ivars[0];
   *_ptr = fn(*_ptr, args); \
 })
 
+#define GET_PTR(index, type, init_fn) ({ \
+  get_pointer(index, sizeof(type), (void (*)(void*))&init_fn);\
+})
 
 //////////////////////////////////////
 // Functions implemented in .c file //
@@ -134,11 +137,13 @@ float interp(float from, float to, float coeff);
 typedef enum {
   PTR_HISTORY,
   PTR_SQUAREWAVE_DATA,
+  // PTR_TRACKING,
+  // PTR_ASV,
 
   __PTR_LAST,
 } ptr_index;
 
-void *get_pointer(ptr_index index, int size);
+void *get_pointer(ptr_index index, int size, void (*init_fn)(void*));
 
 
 ///////////////////////////
@@ -151,6 +156,8 @@ typedef struct {
   int8 last_jitter;
   float last_time;
   float16 flow[HISTORY_LENGTH];
+  // float16 cmd_ipap[HISTORY_LENGTH];
+  // float16 pressure[HISTORY_LENGTH];
 } history_t;
 
 void init_history(history_t *hist);
@@ -158,5 +165,7 @@ void update_history(history_t *hist);
 history_t *get_history();
 
 void apply_jitter(bool undo);
+
+
 
 #endif

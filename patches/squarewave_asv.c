@@ -53,9 +53,9 @@ typedef struct {
   #if ASV == 1
     float16 targets[ASV_STEP_COUNT];
   #endif 
-} breath_t;
+} sqasv_breath_t;
 
-STATIC void init_breath(breath_t *breath) {
+STATIC void init_sqasv_breath(sqasv_breath_t *breath) {
   breath->volume = 0.0f;
   breath->volume_max = 0.0f;
   breath->exh_maxflow = 0.0f;
@@ -86,8 +86,8 @@ typedef struct {
 
   float final_ips;
 
-  breath_t current;
-  breath_t recent;
+  sqasv_breath_t current;
+  sqasv_breath_t recent;
 } my_data_t;
 
 STATIC void init_my_data(my_data_t *data) {
@@ -106,14 +106,14 @@ STATIC void init_my_data(my_data_t *data) {
 
   data->final_ips = 0.0f;
 
-  init_breath(&data->current);
-  init_breath(&data->recent);
+  init_sqasv_breath(&data->current);
+  init_sqasv_breath(&data->recent);
 }
 
 const float ASV_INTERP = 0.025f; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
 STATIC void asv_interp_all(my_data_t* data) {
-  breath_t *recent = &data->recent;
-  breath_t *current = &data->current;
+  sqasv_breath_t *recent = &data->recent;
+  sqasv_breath_t *current = &data->current;
   float coeff = ASV_INTERP;
   float coeff_v = coeff; // Update volumes a bit differently
   if (current->volume_max < recent->volume_max) { // Update downwards a bit slower.
@@ -257,7 +257,7 @@ void MAIN start(int param_1) {
 
     d->final_ips = 0.0f;
 
-    init_breath(&d->current);
+    init_sqasv_breath(&d->current);
     d->current.ips = max(d->asv_target_ips, s_ips);
   } else {
     if (d->ticks != -1) { d->ticks += 1; }

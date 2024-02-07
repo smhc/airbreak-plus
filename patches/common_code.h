@@ -1,7 +1,6 @@
 #ifndef _common_code_h_
 #define _common_code_h_
 
-
 // Mandatory definitions
 #define INLINE inline __attribute__((always_inline))
 #define MAIN __attribute__((section(".text.0.main")))
@@ -133,12 +132,13 @@ float mapc(float s, float start, float end, float new_start, float new_end); // 
 float map01(float s, float start, float end);
 float map01c(float s, float start, float end); // Version that clamps to 0-1
 float interp(float from, float to, float coeff);
+float pow(float base, int exp);
 
 typedef enum {
   PTR_HISTORY,
   PTR_SQUAREWAVE_DATA,
-  // PTR_TRACKING,
-  // PTR_ASV,
+  PTR_TRACKING,
+  PTR_ASV_DATA,
 
   __PTR_LAST,
 } ptr_index;
@@ -151,6 +151,7 @@ void *get_pointer(ptr_index index, int size, void (*init_fn)(void*));
 
 #define HISTORY_LENGTH 16
 
+// TODO: Expand history, make graph.c use it
 typedef struct {
   int tick;
   int8 last_jitter;
@@ -167,5 +168,41 @@ history_t *get_history();
 void apply_jitter(bool undo);
 
 
+///////////////////////////////
+// All-purpose tracking code //
+
+// Setup storage for important data
+typedef struct {
+  float volume;
+  float volume_max;
+
+  // New stuff
+  float exh_maxflow;
+  float inh_maxflow;
+  int16 t; // (10ms ticks)
+  float ti; // (s)
+  float te; // (s)
+} breath_t;
+
+void init_breath(breath_t *breath);
+
+typedef struct {
+  float last_progress;
+  uint32 last_time;
+  uint32 breath_count;
+  uint32 tick;
+
+  bool st_inhaling : 1;
+  bool st_just_started : 1;
+
+  breath_t last;
+  breath_t current;
+} tracking_t;
+
+void init_tracking(tracking_t *tr);
+tracking_t* get_tracking();
+void update_tracking(tracking_t *tr); 
+
+#include "my_asv.h"
 
 #endif

@@ -21,6 +21,16 @@ float interp(float from, float to, float coeff) {
    return from + (to - from) * coeff;
 }
 
+float pow(float base, int exp){
+  if (exp == 0) { return 1; }
+  if (exp % 2 == 0) {
+    return pow(base, exp/2) * pow(base, exp/2);
+  } else {
+    return base * pow(base, exp/2) * pow(base, exp/2);
+  }
+}
+
+
 typedef struct {
   unsigned magic;
   void** pointers;
@@ -81,3 +91,67 @@ void apply_jitter(bool undo) {
   const float amtf = 0.005f * hist->last_jitter;
   *cmd_ps += amtf; *cmd_epap_ramp -= amtf;
 }
+
+
+///////////////////////////////
+// All-purpose tracking code //
+
+void init_breath(breath_t *breath) {
+  breath->volume = 0.0f;
+  breath->volume_max = 0.0f;
+  breath->exh_maxflow = 0.0f;
+  breath->inh_maxflow = 0.0f;
+  breath->t = -1;
+  breath->ti = 0.0f;
+  breath->te = 0.0f;
+}
+void init_tracking(tracking_t *tr) {
+  tr->last_progress = breath_progress;
+  tr->last_time = tim_read_tim5();
+  tr->breath_count = 0;
+  tr->tick = 0;
+  tr->st_inhaling = false;
+  tr->st_just_started = false;
+
+  init_breath(&tr->last);
+  init_breath(&tr->current);
+}
+
+tracking_t* get_tracking() {
+  return GET_PTR(PTR_TRACKING, tracking_t, init_tracking);
+}
+
+void update_tracking(tracking_t *tr) {
+  const unsigned now = tim_read_tim5();
+  // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.
+  if ((now - tr->last_time) > 100000) { init_tracking(tr); }
+
+  tr->st_just_started = false;
+
+  if ((tr->last_progress > 0.5f) && (breath_progress < 0.5f)) {
+    tr->st_inhaling = true; tr->st_just_started = true;
+    tr->last = tr->current;
+    tr->breath_count += 1;
+    init_breath(&tr->current);
+  } else if ((tr->last_progress <= 0.5f) && (breath_progress > 0.5f)) {
+    tr->st_inhaling = false; tr->st_just_started = true;
+  }
+
+  tr->tick += 1; tr->current.t += 1;
+  if (tr->st_inhaling) { 
+    tr->current.ti += 0.01f;
+    inplace(max, &tr->current.inh_maxflow, *flow_compensated);
+  } else { 
+    tr->current.te += 0.01f;
+    inplace(min, &tr->current.exh_maxflow, *flow_compensated);
+  }
+
+  tr->current.volume += (*flow_compensated / 60.0f) * 0.01f;
+  inplace(max, &tr->current.volume, 0.0f);
+  inplace(max, &tr->current.volume_max, tr->current.volume);
+
+  tr->last_progress = breath_progress;
+  tr->last_time = now;
+}
+
+#include "my_asv.c"

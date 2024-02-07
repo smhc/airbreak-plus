@@ -117,7 +117,7 @@ patch_code_asv_task_wraper() {
 
 patch_wrapper_limit_max_pdiff() {
 	echo "Patching wrapper for pressure_limit_max_diff"
-	patch_pointer patches/wrapper_limit_max_pdiff.bin 0xfe380 0xf93d0 '\x81\xe3\x0f\x08'
+	patch_pointer patches/wrapper_limit_max_pdiff.bin 0xfee00 0xf93d0 '\x01\xee\x0f\x08'
 }
 
 patch_code() {

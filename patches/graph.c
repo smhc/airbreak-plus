@@ -60,7 +60,7 @@ int MAIN start(void) {
 	int command = rescale(p_command, p_min, p_max, HEIGHT_PRES);
 	int error = -p_error * ( HEIGHT_PRES / (p_max-p_min) * 3.0f); // Error 
 
-	if (fvars[0x20] <= 0.5f) { // Active inhale
+	if (breath_progress <= 0.5f) { // Active inhale
 		GUI_SetColor(0x101010);
 	} else {
 		GUI_SetColor(0x000000);

@@ -55,7 +55,7 @@ asv_task_wrapper-offset := 0x80fdf00
 asv_task_wrapper-extra := --just-symbols=patches/common_code.elf
 
 patches/wrapper_limit_max_pdiff.elf: patches/wrapper_limit_max_pdiff.o patches/stubs.o
-wrapper_limit_max_pdiff-offset := 0x80fe380
+wrapper_limit_max_pdiff-offset := 0x80fee00
 wrapper_limit_max_pdiff-extra := --just-symbols=patches/common_code.elf
 
 # If there is a new version of the ghidra XML, the stubs.S

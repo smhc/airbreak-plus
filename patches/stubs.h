@@ -10,6 +10,7 @@ extern void GUI_DispStringAt(const char * s, int x, int y);
 extern void LCD_DrawPixel(int x, int y);
 extern const void * font_16;
 extern void GUI_SetFont(const void * font);
+extern void GUI_SetFont_default();
 extern void GUI_GotoXY(int x, int y);
 extern void GUI_FillRect(int x, int y, int x1, int y1);
 extern void LCD_FillRect(int x, int y, int x1, int y1);

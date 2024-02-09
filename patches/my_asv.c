@@ -15,7 +15,7 @@ void pid_init(pid_t *pid, float p, float i, float d, float _min, float _max) {
 
 float pid_get_signal_unclamped(pid_t *pid) {
   float result = pid->kp * pid->current_error; // Proportional branch
-  result += pid->ki * pid->cumulative_error; // Integral branch
+  result += pid->cumulative_error; // Integral branch (pre-multiplied by pid->ki in update)
   result += pid->kd * (pid->current_error - pid->last_error); // Derivative branch
   return result;
 }
@@ -30,9 +30,9 @@ void pid_update(pid_t *pid, float current_error) {
   // Only update the cumulative error if the output is not saturated
   pid->last_error = pid->current_error;
   pid->current_error = current_error;
-  if ((sign(current_error) != sign(outputc)) || (output != outputc)) {
-    pid->cumulative_error += (current_error - pid->last_error);
-    // pid->cumulative_error = clamp(pid->cumulative_error, -2.0f / pid->ki, 2.0f / pid->ki); // FIXME: This is a hack to fix the constant error happening before the targets interpolate up
+  if ((sign(pid->current_error) != sign(outputc)) || (output != outputc)) {
+    pid->cumulative_error += pid->ki * (pid->current_error - pid->last_error);
+    pid->cumulative_error = clamp(pid->cumulative_error, pid->output_min, pid->output_max);
   }
 }
 
@@ -56,7 +56,7 @@ void init_asv_data(asv_data_t *data) {
   data->ticks = -1; // Uninitialized
   data->asv_disable = 0;
 
-  pid_init(&data->pid, 1.2f, 0.08f, 0.025f, -0.05f, 2.5f); // P: 1.0, I: 0.05, D: 0.1, range: 0-2.5 (+1)
+  pid_init(&data->pid, 0.3f, 0.03f, 0.1f, -0.05f, 2.5f); // P: 1.0, I: 0.05, D: 0.1, range: 0-2.5 (+1)
   data->asv_factor = 1.0f;
   data->final_ips = 0.0f;
 
@@ -127,7 +127,7 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
       const float current_flow = asv->targets_current[i] - asv->targets_current[i-1];
       const float error_flow = current_flow / (recent_flow + 0.001f);
 
-      const float error = map01c(error_flow, 0.95f, 0.6f) - map01c(error_flow, 0.98f, 1.35f);
+      const float error = map01c(error_flow, 0.95f, 0.5f) - map01c(error_flow, 0.98f, 1.4f);
 
       asv->asv_disable = 0;
       const float dmult = get_disabler_mult(asv->asv_disable);

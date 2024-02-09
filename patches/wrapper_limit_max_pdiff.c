@@ -9,23 +9,19 @@ const float INSTANT_PS = 0.4f;
 // +1 pointer address: 0x000f93d0. Original function address: 0x080bc992
 extern void pressure_limit_max_difference();
 
-
-STATIC float reshape_vauto_ps(float ps, float mult) {
-  float a = 1.0f - ps;
-  float b = pow(a, 8); // 1.59x the AUC
+// Reshapes PS in 0.0-1.0 format to differently shaped slopes with `mult` times the AUC, first increasing slope before magnitude
+// Only using ^4 shape, because going to ^8 and above is very jarring and results in bad premature cycling
+STATIC float reshape_vauto_ps(float ps1, float mult) {
+  float ps4 = 1.0f - pow(1.0f - ps1, 4);  // ~1.594x the AUC
   if (mult <= 1.0) { 
-    return ps; 
-  } else if ((mult > 1.0) && (mult <= 2.0)) {
-    return map(mult, 1.0f, 2.0f, (1.0f-a) * 1.0f, (1.0f-b) * 1.25f);
-  } else if (mult <= 3.0) {
-    b = pow(a, 16); // 1.87x the AUC
-    a = pow(a, 8);
-    return map(mult, 2.0f, 3.0f, (1.0f-a) * 1.25f, (1.0f-b) * 1.6f);
+    return ps1; 
+  } else if ((mult > 1.0) && (mult <= 2.5)) {
+    return map(mult, 1.0f, 2.5f, ps1 * 1.0f, ps4 * 1.594f);
   } else {
-    return (1.0f - pow(a, 16)) * (mult / 1.87f);
+    return ps4 * (mult / 1.594f);
   }
 
-  return ps;
+  return ps1;
 }
 
 
@@ -73,7 +69,9 @@ void MAIN start() {
 
       if (toggle) { // Disable if Ti min is set to above 0.1s
         float new_ps1 = reshape_vauto_ps(ps1, asv->asv_factor);
-        dps += (new_ps1 - ps1) * vauto_ps;
+        dps += (new_ps1 - ps1) * (vauto_ps - INSTANT_PS);
+      } else {
+        dps -= ps1 * INSTANT_PS;
       }
       asv->final_ips = max(asv->final_ips, ps + dps);
     } 

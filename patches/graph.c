@@ -67,7 +67,7 @@ int MAIN start(void) {
 	}
 	LCD_FillRect(pos_x, top -1, pos_x + 3, bottom + 1);
 
-	GUI_SetColor(0x303030);
+	GUI_SetColor(0x404040);
 	LCD_DrawPixel(pos_x, top);
 	LCD_DrawPixel(pos_x, top + HEIGHT_FLOW);
 	LCD_DrawPixel(pos_x, top + HEIGHT_FLOW + HEIGHT_PRES);
@@ -86,7 +86,6 @@ int MAIN start(void) {
 
 		// draw amplified pressure error with respect to the commanded pressure
 		GUI_SetColor(0x000080);
-
 		LCD_FillRect2(pos_x, g_bottom - command, pos_x, g_bottom - command + error );
 		// draw the current commanded pressure
 		GUI_SetColor(0x00FFF0);
@@ -129,7 +128,7 @@ int MAIN start(void) {
 	GUI_FillRect(0, 130, 200, 160);
 
 	GUI_SetColor(0xFF0000);
-	GUI_SetFont(font_16);
+	GUI_SetFont(font_16); // Causes device to crash and reboot
 	//static const char __attribute__((__section__(".text"))) msg[] = "Hello, world!";
 	//static const char __attribute__((__section__(".text"))) fmt[] = "%d.%02d";
 	GUI_DispStringAt("Hello, world", 10, 130);
@@ -139,4 +138,13 @@ int MAIN start(void) {
 	GUI_SetColor(0x00FF00);
 	GUI_DispStringAt(buf, 40, 150);
 #endif
+
+// Also tried:
+GUI_SetColor(0xFFFF00);
+GUI_SetTextMode(2);
+GUI_SetTextAlign(0);
+GUI_SetFont_default();
+GUI_DispStringAt("Hello, world", 20, top + HEIGHT_FLOW + 20);
+// No luck, displays nothing. Changing params of GUI_DispStringAt to short or unsigned short does nothing too.
+
 */

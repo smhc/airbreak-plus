@@ -51,7 +51,7 @@ static const   int *pap_timer = &ivars[0];
 
 #define f_patient (fvars[0x0])
 #define f_compensated (fvars[0x25])
-#define f_unfucked (fvars[0x0] - fvars[0x22])
+#define f_unfucked (*flow_patient - *leak_basal)
 
 #define p_actual  (fvars[1])
 #define p_command (fvars[0x2a])

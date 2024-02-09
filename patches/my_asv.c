@@ -30,10 +30,10 @@ void pid_update(pid_t *pid, float current_error) {
   // Only update the cumulative error if the output is not saturated
   pid->last_error = pid->current_error;
   pid->current_error = current_error;
-  if ((sign(pid->current_error) != sign(outputc)) || (output != outputc)) {
-    pid->cumulative_error += pid->ki * (pid->current_error - pid->last_error);
+  // if ((sign(pid->current_error) != sign(outputc)) || (output != outputc)) { // Was buggy, todo: fix or remove
+    pid->cumulative_error += pid->ki * pid->current_error;
     pid->cumulative_error = clamp(pid->cumulative_error, pid->output_min, pid->output_max);
-  }
+  // }
 }
 
 ////////////////////////
@@ -56,7 +56,7 @@ void init_asv_data(asv_data_t *data) {
   data->ticks = -1; // Uninitialized
   data->asv_disable = 0;
 
-  pid_init(&data->pid, 0.3f, 0.03f, 0.1f, -0.05f, 2.5f); // P: 1.0, I: 0.05, D: 0.1, range: 0-2.5 (+1)
+  pid_init(&data->pid, 1.0f, 0.1f, 0.2f, -0.05f, 2.5f); // P: 1.0, I: 0.05, D: 0.1, range: 0-2.5 (+1)
   data->asv_factor = 1.0f;
   data->final_ips = 0.0f;
 
@@ -110,10 +110,12 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
     }
     asv->final_ips = 0.0f;
 
+    /*
     int te_excess = (int)(clamp(last->te - max(1.6f, recent->te), 0.0f, 6.0f));
     int vol_excess = (int)(clamp((last->volume_max / recent->volume_max - 1.1f) * 10.0f, 0.0f, 6.0f));
     asv->asv_disable += te_excess + vol_excess - 1; // Reduce by 1 per breath
     asv->asv_disable = clamp(asv->asv_disable, -2, 9);
+    */
 
     asv->breath_count += 1;
   }
@@ -127,12 +129,10 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
       const float current_flow = asv->targets_current[i] - asv->targets_current[i-1];
       const float error_flow = current_flow / (recent_flow + 0.001f);
 
-      const float error = map01c(error_flow, 0.95f, 0.5f) - map01c(error_flow, 0.98f, 1.4f);
+      const float error = map01c(error_volume, 0.95f, 0.5f) - map01c(error_volume, 0.98f, 1.4f);
 
-      asv->asv_disable = 0;
-      const float dmult = get_disabler_mult(asv->asv_disable);
-      if (asv->asv_disable <= 0) { pid_update(&asv->pid, error); }
-      asv->asv_factor = clamp(1.0f + pid_get_signal(&asv->pid) * dmult, 1.0f, 3.5f);
+      pid_update(&asv->pid, error);
+      asv->asv_factor = clamp(1.0f + pid_get_signal(&asv->pid), 1.0f, 3.5f);
     }
   }
 }

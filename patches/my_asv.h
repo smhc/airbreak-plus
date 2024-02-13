@@ -8,7 +8,7 @@
 
 #define ASV_STEP_LENGTH 5 // (10ms ticks)
 #define ASV_STEP_COUNT 20 // (steps)
-#define ASV_STEP_SKIP 1 // (steps)
+#define ASV_STEP_SKIP 2 // (steps)
 
 typedef struct {
   float last_error;
@@ -34,15 +34,12 @@ typedef struct {
   uint32 breath_count;
 
   int16 ticks; // Starts at 0, +1 each call
-  bool asv_disable;
-
   pid_t pid;
   float asv_factor;
   float final_ips; // Final max IPS value, used to maintain correct downslope
 
   breath_t recent;
 
-  // float16 volumes[60];
   float16 targets_recent[ASV_STEP_COUNT+1]; // +1 for flow calculations
   float16 targets_current[ASV_STEP_COUNT+1];
 } asv_data_t;

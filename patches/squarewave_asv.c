@@ -22,9 +22,9 @@ const float EPS_FIXED_TIME = 1.2f;
 const float EPS_REDUCE_WHEN_ASV = 0.5f; // % of extra IPS to reduce EPS by
 
 // 20*5*10ms = 1s
-#define ASV_STEP_COUNT 20
-#define ASV_STEP_LENGTH 5
-#define ASV_STEP_SKIP 1 // Amount of steps before first doing ASV adjustments. MUST be at least 1 or code will crash due to out of bounds target array read
+#define SQ_ASV_STEP_COUNT 20
+#define SQ_ASV_STEP_LENGTH 5
+#define SQ_ASV_STEP_SKIP 1 // Amount of steps before first doing ASV adjustments. MUST be at least 1 or code will crash due to out of bounds target array read
 const float ASV_MAX_IPS = 2.0f; // within one breath
 const float ASV_GAIN = 40.0f; // (cmH2O/s at 50% flow deficit)
 const float ASV_MAX_EPAP = 1.0f;
@@ -51,7 +51,7 @@ typedef struct {
 
   float ips;
   #if ASV == 1
-    float16 targets[ASV_STEP_COUNT];
+    float16 targets[SQ_ASV_STEP_COUNT];
   #endif 
 } sqasv_breath_t;
 
@@ -64,7 +64,7 @@ STATIC void init_sqasv_breath(sqasv_breath_t *breath) {
   breath->te = 0.0f;
   breath->ips = 0.0f;
   #if ASV == 1
-    for(int i=0; i<ASV_STEP_COUNT; i++) {
+    for(int i=0; i<SQ_ASV_STEP_COUNT; i++) {
       breath->targets[i] = 0.0f;
     }
   #endif
@@ -122,7 +122,7 @@ STATIC void asv_interp_all(my_data_t* data) {
   // Don't adjust targets if it's a hyperpnea. Breath count hardcoded for ASV_INTERP=0.025f constant.
   // TODO: Instead of counting breaths, wait for average error to stabilize
   #if ASV == 1
-    for(int i=0; i<ASV_STEP_COUNT; i++) {
+    for(int i=0; i<SQ_ASV_STEP_COUNT; i++) {
       // If it has zero volume, it means the breath was past its peak already, ignore it.
       if (current->targets[i] > 0.0f) {
         inplace(interp, &recent->targets[i], current->targets[i], coeff_v);
@@ -279,9 +279,9 @@ void MAIN start(int param_1) {
 
 
   #if ASV == 1
-    int i = d->ticks/ASV_STEP_LENGTH;
+    int i = d->ticks/SQ_ASV_STEP_LENGTH;
 
-    if ((d->ticks % ASV_STEP_LENGTH == 0) && (i>=ASV_STEP_SKIP) && (i<ASV_STEP_COUNT) && (d->stage == S_INHALE)) {
+    if ((d->ticks % SQ_ASV_STEP_LENGTH == 0) && (i>=SQ_ASV_STEP_SKIP) && (i<SQ_ASV_STEP_COUNT) && (d->stage == S_INHALE)) {
       d->current.targets[i] = d->current.volume;
       const float error_volume = d->current.targets[i] / (d->recent.targets[i] + 0.001f);
       // float recent_flow = d->recent.targets[i] - d->recent.targets[i-1];
@@ -296,7 +296,7 @@ void MAIN start(int param_1) {
 
       // This way:  95-140% => 0 to -1;  95-50% => 0 to 1
       const float ips_adjustment = map01c(error_volume, 0.94f, 0.5f) - map01c(error_volume, 0.96f, 1.4f);
-      const float dt_asv = delta * ASV_STEP_LENGTH;
+      const float dt_asv = delta * SQ_ASV_STEP_LENGTH;
 
       // FIXME: Change the gain to something sane, probably delta-based
       // The 0.05f values ensure the adjustment is not super tiny.

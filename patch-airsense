@@ -8,12 +8,12 @@ OUT=$2
 DEBUG_PATCH=""
 
 if [ -z "$IN" -o -z "$OUT" ]; then
-		die "Usage: $0: stm32.bin stm32-unlocked.bin"
+	die "Usage: $0: stm32.bin stm32-unlocked.bin"
 fi
 
 
 if [ ! -r "$IN" ]; then
-		die "$IN: can not open input file"
+	die "$IN: can not open input file"
 fi
 
 patch() {
@@ -82,42 +82,42 @@ patch_pointer() {
 	fi
 }
 patch_code_ventilator() {
-	patch_direct patches/ventilator.bin 0xbb734
+	patch_direct build/ventilator.bin 0xbb734
 }
 
 patch_code_common() {
 	echo "Patching common_code.c"
-	patch_direct patches/common_code.bin 0xfe000
+	patch_direct build/common_code.bin 0xfe000
 }
 
 patch_code_graph() {
 	echo "Patching graphing code"
-	patch_pointer patches/graph.bin 0xfcd40 0xf9c88 '\x41\xcd\x0f\x08'
+	patch_pointer build/graph.bin 0xfcd40 0xf9c88 '\x41\xcd\x0f\x08'
 }
 
 # Replaces not_called_during_loop
 patch_code_squarewave() {
 	echo "Patching Squarewave"
-	patch_pointer patches/squarewave.bin 0xfd000 0xf9778 '\x01\xd0\x0f\x08'
+	patch_pointer build/squarewave.bin 0xfd000 0xf9778 '\x01\xd0\x0f\x08'
 }
 
 patch_code_squarewave_asv() {
 	echo "Patching Squarewave ASV"
-	patch_pointer patches/squarewave_asv.bin 0xfd000 0xf9778 '\x01\xd0\x0f\x08'
+	patch_pointer build/squarewave_asv.bin 0xfd000 0xf9778 '\x01\xd0\x0f\x08'
 }
 
 # patch_code_squarewave_pav() {
-# 	patch_pointer patches/squarewave_pav.bin 0xfd000 0xf9778 '\x01\xd0\x0f\x08'
+# 	patch_pointer build/squarewave_pav.bin 0xfd000 0xf9778 '\x01\xd0\x0f\x08'
 # }
 
 patch_code_asv_task_wraper() {
 	echo "Patching ASV task wrapper"
-	patch_pointer patches/asv_task_wrapper.bin 0xfdf00 0xf44e0 '\x01\xdf\x0f\x08'
+	patch_pointer build/asv_task_wrapper.bin 0xfdf00 0xf44e0 '\x01\xdf\x0f\x08'
 }
 
 patch_wrapper_limit_max_pdiff() {
 	echo "Patching wrapper for pressure_limit_max_diff"
-	patch_pointer patches/wrapper_limit_max_pdiff.bin 0xfee00 0xf93d0 '\x01\xee\x0f\x08'
+	patch_pointer build/wrapper_limit_max_pdiff.bin 0xfee00 0xf93d0 '\x01\xee\x0f\x08'
 }
 
 patch_code() {

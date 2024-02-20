@@ -1,6 +1,9 @@
 #ifndef _my_asv_c_
 #define _my_asv_c_
 
+const float asv_low = 0.80f;
+const float asv_high = 0.85f;
+
 /////////////////////////
 // PID Controller Code //
 
@@ -106,7 +109,7 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
       const float current_flow = asv->targets_current[i] - asv->targets_current[i-1];
       const float error_flow = current_flow / (recent_flow + 0.001f);
 
-      float error = map01c(error_volume, 0.96f, 0.4f) - map01c(error_volume, 0.98f, 1.4f);
+      float error = map01c(error_volume, asv_low, 0.4f) - map01c(error_volume, asv_high, 1.4f);
       // Speed up tiny adjustments slightly.
       if (error > 0.0f) { error = error * 0.975f - 0.025f; }
       if (error < 0.0f) { error = error * 0.95f - 0.05f; }

@@ -75,6 +75,11 @@ static const   int *pap_timer = &ivars[0];
 #define vauto_ipap (vauto_epap + vauto_ps)
 // 0x91 seems to contain epap-derived value
 
+// These overlap with VAuto settings.
+#define apap_epap_min fvars[0x9]
+#define apap_epap_max fvars[0xa]
+#define apap_epr fvars[0xb]
+
 #define ti_min (ivars[0x5]*10) // (ms) integer
 #define ti_max (ivars[0x6]*10) // (ms) integer
 
@@ -139,6 +144,7 @@ typedef enum {
   PTR_SQUAREWAVE_DATA,
   PTR_TRACKING,
   PTR_ASV_DATA,
+  PTR_FEATURES,
 
   __PTR_LAST,
 } ptr_index;

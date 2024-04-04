@@ -1,8 +1,7 @@
 #ifndef _my_asv_c_
 #define _my_asv_c_
 
-const float asv_low = 0.80f;
-const float asv_high = 0.85f;
+#include "my_asv.h"
 
 /////////////////////////
 // PID Controller Code //
@@ -56,7 +55,7 @@ void init_asv_data(asv_data_t *data) {
 
   data->ticks = -1; // Uninitialized
 
-  pid_init(&data->pid, 0.6f, 0.075f, 0.2f, -0.05f, 2.5f);
+  pid_init(&data->pid, 0.6f, 0.075f, 0.2f, -0.05f, asv_pid_max);
   data->asv_factor = 1.0f;
   data->final_ips = 0.0f;
 
@@ -79,6 +78,7 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
 
   if (tr->st_inhaling && tr->st_just_started) { // New breath just started
     bool valid_breath = last->te > max(recent->te * 0.6f, 0.7f);
+    valid_breath &= last->ti > 0.7f;
     if (valid_breath) {
       float coeff = 0.025f; // ~40% from last 20 breaths, ~66% from 40, ~77% from 60
       for(int i=0; i<ASV_STEP_COUNT+1; i++) {
@@ -116,7 +116,7 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
       if (error >= 0.99f) { error = 0.0f; } // If the error maxes out, it's probably not a real inhale
 
       pid_update(&asv->pid, error);
-      asv->asv_factor = clamp(1.0f + pid_get_signal(&asv->pid), 1.0f, 3.5f);
+      asv->asv_factor = clamp(1.0f + pid_get_signal(&asv->pid), 1.0f, 1.0f + asv_pid_max);
     }
   }
 }

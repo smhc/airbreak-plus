@@ -1,14 +1,19 @@
 #ifndef _my_asv_h_
 #define _my_asv_h_
 
-/////////////////////////
-// PID controller code //
-
-// #define ASV_STEP_COUNT 20
+///////////////////
+// Config values //
 
 #define ASV_STEP_LENGTH 5 // (10ms ticks)
-#define ASV_STEP_COUNT 20 // (steps)
+#define ASV_STEP_COUNT 25 // (steps)
 #define ASV_STEP_SKIP 2 // (steps)
+
+const float asv_low = 0.95f;
+const float asv_high = 0.98f;
+const float asv_pid_max = 1.5f;
+
+/////////////////////////
+// PID controller code //
 
 typedef struct {
   float last_error;

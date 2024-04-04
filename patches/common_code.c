@@ -113,6 +113,7 @@ void init_tracking(tracking_t *tr) {
   tr->st_inhaling = false;
   tr->st_just_started = false;
 
+  init_breath(&tr->recent);
   init_breath(&tr->last);
   init_breath(&tr->current);
 }
@@ -126,13 +127,26 @@ void update_tracking(tracking_t *tr) {
   // Initialize if it's the first time or more than 0.1s elapsed, suggesting that the therapy was stopped and re-started.
   if ((now - tr->last_time) > 100000) { init_tracking(tr); }
 
+  // Handle breaths and their stage
   tr->st_just_started = false;
-
   if ((tr->last_progress > 0.5f) && (breath_progress < 0.5f)) {
     tr->st_inhaling = true; tr->st_just_started = true;
+
     tr->last = tr->current;
     tr->breath_count += 1;
     init_breath(&tr->current);
+
+    // Update recent breath representing the recent "weighted averages"
+    // TODO: Expand checks for whether a breath was valid
+    tr->st_valid_breath = tr->last.te > max(tr->recent.te * 0.6f, 0.7f);
+    tr->st_valid_breath &= tr->last.ti > 0.7f;
+    if (tr->st_valid_breath) {
+      inplace(interp, &tr->recent.volume_max, tr->last.volume_max, tr_coeff);
+      inplace(interp, &tr->recent.exh_maxflow, tr->last.exh_maxflow, tr_coeff);
+      inplace(interp, &tr->recent.inh_maxflow, tr->last.inh_maxflow, tr_coeff);
+      inplace(interp, &tr->recent.ti, tr->last.ti, tr_coeff);
+      inplace(interp, &tr->recent.te, tr->last.te, tr_coeff);
+    }
   } else if ((tr->last_progress <= 0.5f) && (breath_progress > 0.5f)) {
     tr->st_inhaling = false; tr->st_just_started = true;
   }

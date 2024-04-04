@@ -118,6 +118,7 @@ static const   int *pap_timer = &ivars[0];
 #define clamp01(a) ({ clamp(a, 0.0f, 1.0f) })
 
 #define sign(a) ({a >= 0 ? 1 : -1; })
+#define abs(a) (a * sign(a))
 
 // Usage example: `inplace(max, &a, b)`
 #define inplace(fn, ptr, args...) ({ \
@@ -192,6 +193,8 @@ typedef struct {
 
 void init_breath(breath_t *breath);
 
+const float tr_coeff = 0.025f;
+
 typedef struct {
   float last_progress;
   uint32 last_time;
@@ -200,7 +203,9 @@ typedef struct {
 
   bool st_inhaling : 1;
   bool st_just_started : 1;
+  bool st_valid_breath : 1; // Was the last breath valid(e.g. not a super-short pseudo-inhale)?
 
+  breath_t recent; // Tracks recent breath parameters to compare against.
   breath_t last;
   breath_t current;
 } tracking_t;

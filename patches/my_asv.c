@@ -59,42 +59,38 @@ void init_asv_data(asv_data_t *data) {
   data->asv_factor = 1.0f;
   data->final_ips = 0.0f;
 
-  init_breath(&data->recent);
+  data->target_vol = 0.0f;
+  data->target_vol2 = 0.0f;
 
   for(int i=0; i<ASV_STEP_COUNT+1; i++) {
     data->targets_current[i] = 0.0f;
     data->targets_recent[i] = 0.0f;
+    data->targets_recent2[i] = 0.0f;
   }
 }
 
 void update_asv_data(asv_data_t* asv, tracking_t* tr) {
-  // TODO: Expand checks for whether a breath was valid
-  // TODO: Convert to using the 80th percentile of recent volume, multiplied by relative recent targets
   // TODO: Wait for average error to stabilize before engaging ASV
-
-  breath_t *recent = &asv->recent;
   breath_t *current = &tr->current;
   breath_t *last = &tr->last;
 
-  if (tr->st_inhaling && tr->st_just_started) { // New breath just started
-    bool valid_breath = last->te > max(recent->te * 0.6f, 0.7f);
-    valid_breath &= last->ti > 0.7f;
-    if (valid_breath) {
-      float coeff = 0.025f; // ~40% from last 20 breaths, ~66% from 40, ~77% from 60
-      for(int i=0; i<ASV_STEP_COUNT+1; i++) {
-        // If it has zero volume, it means the breath was past its peak already, ignore it.
-        if (asv->targets_current[i] > 0.0f) {
-          inplace(interp, &asv->targets_recent[i], asv->targets_current[i], coeff);
-        }
-        asv->targets_current[i] = 0.0f;
-      }
-      inplace(interp, &recent->volume_max, current->volume_max, coeff);
-      inplace(interp, &recent->exh_maxflow, current->exh_maxflow, coeff);
-      inplace(interp, &recent->inh_maxflow, current->inh_maxflow, coeff);
-      inplace(interp, &recent->ti, current->ti, coeff);
-      inplace(interp, &recent->te, current->te, coeff);
+  if (tr->st_inhaling && tr->st_just_started && tr->st_valid_breath) { // New breath just started
+    float asv_coeff3 = asv_coeff2;
+    if (last->volume_max > asv->target_vol2) { asv_coeff3 *= 0.5f; }
+    if (last->volume_max > asv->target_vol2 * 1.3f) { asv_coeff3 *= 0.5f; }
+    if (last->volume_max < asv->target_vol2 * 0.7f) { asv_coeff3 *= 0.5f; }
+    inplace(interp, &asv->target_vol2, last->volume_max, asv_coeff3);
+    inplace(interp, &asv->target_vol, asv->target_vol2, asv_coeff1);
 
+    for(int i=0; i<ASV_STEP_COUNT+1; i++) {
+      // If it has zero volume, it means the breath was past its peak already, ignore it.
+      if (asv->targets_current[i] > 0.0f) {
+        inplace(interp, &asv->targets_recent2[i], asv->targets_current[i], asv_coeff3);
+        inplace(interp, &asv->targets_recent[i], asv->targets_recent2[i], asv_coeff1);
+      }
+      asv->targets_current[i] = 0.0f;
     }
+
     asv->final_ips = 0.0f;
     asv->breath_count += 1;
   }

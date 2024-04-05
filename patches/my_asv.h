@@ -5,8 +5,8 @@
 // Config values //
 
 #define ASV_STEP_LENGTH 5 // (10ms ticks)
-#define ASV_STEP_COUNT 25 // (steps)
-#define ASV_STEP_SKIP 2 // (steps)
+#define ASV_STEP_COUNT 20 // (steps)
+#define ASV_STEP_SKIP 3 // (steps) MUST be at least 1 for the padding code to work correctly
 
 const float asv_low = 0.94f;
 const float asv_high = 0.96f;
@@ -30,7 +30,6 @@ typedef struct {
 } pid_t;
 
 void pid_init(pid_t *pid, float p, float i, float d, float _min, float _max);
-float pid_get_signal_unclamped(pid_t *pid);
 float pid_get_signal(pid_t *pid);
 void pid_update(pid_t *pid, float current_error);
 

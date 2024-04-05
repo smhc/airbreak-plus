@@ -15,20 +15,14 @@ void pid_init(pid_t *pid, float p, float i, float d, float _min, float _max) {
   pid->output_max = _max;
 }
 
-float pid_get_signal_unclamped(pid_t *pid) {
+float pid_get_signal(pid_t *pid) {
   float result = pid->kp * pid->current_error; // Proportional branch
   result += pid->cumulative_error; // Integral branch (pre-multiplied by pid->ki in update)
   result += pid->kd * (pid->current_error - pid->last_error); // Derivative branch
-  return result;
-}
-
-float pid_get_signal(pid_t *pid) {
-  return clamp(pid_get_signal_unclamped(pid), pid->output_min, pid->output_max);
+  return clamp(result, pid->output_min, pid->output_max);
 }
 
 void pid_update(pid_t *pid, float current_error) {
-  const float output = pid_get_signal_unclamped(pid);
-  const float outputc = pid_get_signal(pid);
   pid->last_error = pid->current_error;
   pid->current_error = current_error;
   // Instead of a typical saturation check, just pre-multiply by ki and clamp to min/max
@@ -112,9 +106,12 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
       if (error >= 0.99f) { error = 0.0f; } // If the error maxes out, it's probably not a real inhale
 
       pid_update(&asv->pid, error);
-      asv->asv_factor = clamp(1.0f + pid_get_signal(&asv->pid), 1.0f, 1.0f + asv_pid_max);
     }
   }
+
+  // Diminish the asv factor during the first N*50ms, to avoid huge sudden PS in case of false breaths
+  const float mult = map01c(1.0f * current->t, 0.0f, 1.0f * ASV_STEP_LENGTH * ASV_STEP_SKIP);
+  asv->asv_factor = clamp(1.0f + pid_get_signal(&asv->pid) * mult, 1.0f, 1.0f + asv_pid_max);
 }
 
 #endif

@@ -83,10 +83,10 @@ history_t *get_history() {
 
 void apply_jitter(bool undo) {
   history_t *hist = get_history();
-  if (undo) { // Get new jitter value
+  if (undo) { // Undo the previous
     hist->last_jitter *= -1;
-  } else { // Undo the previous
-    hist->last_jitter = 2 - (tim_read_tim5() % 5);
+  } else { // Get new jitter value
+    hist->last_jitter = 1 - (ivars[0]/4) % 2 * 2;
   }
   const float amtf = 0.005f * hist->last_jitter;
   *cmd_ps += amtf; *cmd_epap_ramp -= amtf;

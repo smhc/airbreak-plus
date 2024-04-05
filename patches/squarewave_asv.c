@@ -111,7 +111,7 @@ STATIC void init_my_data(my_data_t *data) {
 }
 
 const float ASV_INTERP = 0.025f; // ~45% from last 15 breaths, ~70% from 30, ~88% from 45
-STATIC void asv_interp_all(my_data_t* data) {
+STATIC void asv_lerp_all(my_data_t* data) {
   sqasv_breath_t *recent = &data->recent;
   sqasv_breath_t *current = &data->current;
   float coeff = ASV_INTERP;
@@ -125,17 +125,17 @@ STATIC void asv_interp_all(my_data_t* data) {
     for(int i=0; i<SQ_ASV_STEP_COUNT; i++) {
       // If it has zero volume, it means the breath was past its peak already, ignore it.
       if (current->targets[i] > 0.0f) {
-        inplace(interp, &recent->targets[i], current->targets[i], coeff_v);
+        inplace(lerp, &recent->targets[i], current->targets[i], coeff_v);
       }
       current->targets[i] = 0.0f;
     }
   #endif
-  inplace(interp, &recent->ips, current->ips, 0.5f);
-  inplace(interp, &recent->volume_max, current->volume_max, coeff_v);
-  inplace(interp, &recent->exh_maxflow, current->exh_maxflow, coeff);
-  inplace(interp, &recent->inh_maxflow, current->inh_maxflow, coeff);
-  inplace(interp, &recent->ti, current->ti, coeff);
-  inplace(interp, &recent->te, current->te, coeff);
+  inplace(lerp, &recent->ips, current->ips, 0.5f);
+  inplace(lerp, &recent->volume_max, current->volume_max, coeff_v);
+  inplace(lerp, &recent->exh_maxflow, current->exh_maxflow, coeff);
+  inplace(lerp, &recent->inh_maxflow, current->inh_maxflow, coeff);
+  inplace(lerp, &recent->ti, current->ti, coeff);
+  inplace(lerp, &recent->te, current->te, coeff);
 }
 
 STATIC my_data_t * get_data() {
@@ -197,11 +197,11 @@ void MAIN start(int param_1) {
     #endif
   
     #if CUSTOM_TRIGGER == 1 
-      // float tr_flow = map01c(flow, 0.0f, sens_trigger / 60.0f);
-      // float tr_pres = map01c(p_error, -0.05f, -0.20f) * (tr_flow > 0.0f) * 0.5f;
+      // float tr_flow = remap01c(flow, 0.0f, sens_trigger / 60.0f);
+      // float tr_pres = remap01c(p_error, -0.05f, -0.20f) * (tr_flow > 0.0f) * 0.5f;
       // TODO: Only do the pressure term if cmd_ps >= 0
 
-      float sens = 0.5f + 0.5f * map01c(d->current.te, max(1.0f, d->recent.te * 0.5f), max(1.6f, d->recent.te * 0.85f));
+      float sens = 0.5f + 0.5f * remap01c(d->current.te, max(1.0f, d->recent.te * 0.5f), max(1.6f, d->recent.te * 0.85f));
       float pressure_term = (flow>-0.04f) * (*cmd_ps >= -0.02f) * clamp(-p_error-0.05f, 0.0f, 0.25f) * 0.2f; // neg 0.05-0.20 -> 0-0.066
       int8 inspiratory_trigger = ( pressure_term + flow) * sens >= (sens_trigger / 60.0f + 0.025f);
       inspiratory_trigger &&=  ((d->stage == S_UNINITIALIZED) || (d->stage == S_EXHALE_LATE));
@@ -228,16 +228,16 @@ void MAIN start(int param_1) {
     d->stage = S_INHALE;
     if (((d->current.volume_max / d->recent.volume_max) <= 1.35f) || d->breath_count < 90) {
     if ((d->current.te > d->recent.te * 0.60f) && (d->ticks != -1) && (d->dont_support == 0) ) {
-        asv_interp_all(d);
+        asv_lerp_all(d);
     }}
 
     // 0-25% asvIPS -> go down; 25-100% asvIPS -> go up 
     const float rel_ips = max(d->current.ips - s_ips, 0.0f) / ASV_MAX_IPS;
     if (ASV_MAX_EPAP > 0.0f) {
       float rel_epap = max(d->asv_target_epap - s_epap, 0.0f) / ASV_MAX_EPAP;
-      d->asv_target_epap_target = d->asv_target_epap + (map01c(rel_ips, 0.25f, 1.0f) * (1.0f - rel_epap) - map01c(rel_ips, 0.20f, 0.0f) * rel_epap) * ASV_MAX_EPAP;
+      d->asv_target_epap_target = d->asv_target_epap + (remap01c(rel_ips, 0.25f, 1.0f) * (1.0f - rel_epap) - remap01c(rel_ips, 0.20f, 0.0f) * rel_epap) * ASV_MAX_EPAP;
       d->asv_target_epap_target = clamp(d->asv_target_epap_target, s_epap, s_epap + ASV_MAX_EPAP);
-      // d->asv_target_epap_target = s_epap + map01c(d->current.ips, s_ips, s_ips + ASV_MAX_IPS) * ASV_MAX_EPAP;
+      // d->asv_target_epap_target = s_epap + remap01c(d->current.ips, s_ips, s_ips + ASV_MAX_IPS) * ASV_MAX_EPAP;
     }
     d->asv_target_epap = max(d->asv_target_epap, s_epap);
 
@@ -295,7 +295,7 @@ void MAIN start(int param_1) {
       #endif
 
       // This way:  95-140% => 0 to -1;  95-50% => 0 to 1
-      const float ips_adjustment = map01c(error_volume, 0.94f, 0.5f) - map01c(error_volume, 0.96f, 1.4f);
+      const float ips_adjustment = remap01c(error_volume, 0.94f, 0.5f) - remap01c(error_volume, 0.96f, 1.4f);
       const float dt_asv = delta * SQ_ASV_STEP_LENGTH;
 
       // FIXME: Change the gain to something sane, probably delta-based
@@ -336,17 +336,17 @@ void MAIN start(int param_1) {
   // Set the commanded PS and EPAP values based on our target
   *cmd_epap = epap;
   if (d->dont_support) {
-    inplace(interp, cmd_ps, 0.0f, 3.0f * delta);
+    inplace(lerp, cmd_ps, 0.0f, 3.0f * delta);
   } else {
     if (d->stage == S_INHALE || d->stage == S_INHALE_LATE) {
       const float t = d->current.ti;
       if (d->stage == S_INHALE) {
 
         // FIXME: A sawtooth shape, not very useful, also deformed by the ASV function
-        // float perc = map01c(t, 0.100f, 0.5f * s_rise_time + 0.100f) * (1.0f-IPS_PARTIAL_EASYBREATHE) * 0.6f;
-        // perc += map01c(t, 0.100f + 0.5f * s_rise_time, s_rise_time + 0.100f) * (1.0f-IPS_PARTIAL_EASYBREATHE) * 0.4f;
-        // perc += map01c(t, 0.0f, 1.2f) * IPS_PARTIAL_EASYBREATHE;
-        float perc = map01c(t, 0.0f, s_rise_time);
+        // float perc = remap01c(t, 0.100f, 0.5f * s_rise_time + 0.100f) * (1.0f-IPS_PARTIAL_EASYBREATHE) * 0.6f;
+        // perc += remap01c(t, 0.100f + 0.5f * s_rise_time, s_rise_time + 0.100f) * (1.0f-IPS_PARTIAL_EASYBREATHE) * 0.4f;
+        // perc += remap01c(t, 0.0f, 1.2f) * IPS_PARTIAL_EASYBREATHE;
+        float perc = remap01c(t, 0.0f, s_rise_time);
 
         *cmd_ps = ips * perc;
       } else {
@@ -354,13 +354,13 @@ void MAIN start(int param_1) {
       }
     } else if (d->stage == S_EXHALE || d->stage == S_EXHALE_LATE) { // Exhale
       const float t = d->current.te;
-      float eps_mult = map01c(d->current.volume / d->current.volume_max, 0.05f, 0.6f);
-      eps_mult = min(eps_mult, map01c(t, EPS_FIXED_TIME, 0.4f));
+      float eps_mult = remap01c(d->current.volume / d->current.volume_max, 0.05f, 0.6f);
+      eps_mult = min(eps_mult, remap01c(t, EPS_FIXED_TIME, 0.4f));
 
-      float ips_mult = map01c(t, s_fall_time, 0.0f); ips_mult = ips_mult * ips_mult * 0.95f;
+      float ips_mult = remap01c(t, s_fall_time, 0.0f); ips_mult = ips_mult * ips_mult * 0.95f;
       if (EPS_FLOWBASED_DOWNSLOPE > 0.0f) {
         float temp = EPS_FLOWBASED_DOWNSLOPE;
-        ips_mult = min(ips_mult, ips_mult * (1.0f-temp) + temp * map01c(flow, -d->current.inh_maxflow * 0.9f, cycle_threshold) );
+        ips_mult = min(ips_mult, ips_mult * (1.0f-temp) + temp * remap01c(flow, -d->current.inh_maxflow * 0.9f, cycle_threshold) );
       }
       *cmd_ps = ips_mult * d->final_ips - (1.0f - ips_mult) * eps_mult * eps;
     }

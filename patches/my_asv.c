@@ -73,14 +73,14 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
     if (last->volume_max > asv->target_vol2) { asv_coeff3 *= 0.5f; }
     if (last->volume_max > asv->target_vol2 * 1.3f) { asv_coeff3 *= 0.5f; }
     if (last->volume_max < asv->target_vol2 * 0.7f) { asv_coeff3 *= 0.5f; }
-    inplace(interp, &asv->target_vol2, last->volume_max, asv_coeff3);
-    inplace(interp, &asv->target_vol, asv->target_vol2, asv_coeff1);
+    inplace(lerp, &asv->target_vol2, last->volume_max, asv_coeff3);
+    inplace(lerp, &asv->target_vol, asv->target_vol2, asv_coeff1);
 
     for(int i=0; i<ASV_STEP_COUNT+1; i++) {
       // If it has zero volume, it means the breath was past its peak already, ignore it.
       if (asv->targets_current[i] > 0.0f) {
-        inplace(interp, &asv->targets_recent2[i], asv->targets_current[i], asv_coeff3);
-        inplace(interp, &asv->targets_recent[i], asv->targets_recent2[i], asv_coeff1);
+        inplace(lerp, &asv->targets_recent2[i], asv->targets_current[i], asv_coeff3);
+        inplace(lerp, &asv->targets_recent[i], asv->targets_recent2[i], asv_coeff1);
       }
       asv->targets_current[i] = 0.0f;
     }
@@ -99,7 +99,7 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
       const float current_flow = asv->targets_current[i] - asv->targets_current[i-1];
       const float error_flow = current_flow / (recent_flow + 0.001f);
 
-      float error = map01c(error_volume, asv_low, 0.4f) - map01c(error_volume, asv_high, 1.4f);
+      float error = remap01c(error_volume, asv_low, 0.4f) - remap01c(error_volume, asv_high, 1.4f);
       // Speed up tiny adjustments slightly.
       if (error > 0.0f) { error = error * 0.975f - 0.025f; }
       if (error < 0.0f) { error = error * 0.95f - 0.05f; }
@@ -110,7 +110,7 @@ void update_asv_data(asv_data_t* asv, tracking_t* tr) {
   }
 
   // Diminish the asv factor during the first N*50ms, to avoid huge sudden PS in case of false breaths
-  const float mult = map01c(1.0f * current->t, 0.0f, 1.0f * ASV_STEP_LENGTH * ASV_STEP_SKIP);
+  const float mult = remap01c(1.0f * current->t, 0.0f, 1.0f * ASV_STEP_LENGTH * ASV_STEP_SKIP);
   asv->asv_factor = clamp(1.0f + pid_get_signal(&asv->pid) * mult, 1.0f, 1.0f + asv_pid_max);
 }
 

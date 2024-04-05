@@ -56,7 +56,7 @@ static const   int *pap_timer = &ivars[0];
 #define p_actual  (fvars[1])
 #define p_command (fvars[0x2a])
 
-#define p_error (fvars[1] - fvars[0x2a]) // Positive when above target
+#define p_error (p_actual - p_command) // Positive when above target
 
 // These seem to be universal across modes, e.g. S, VAuto, etc.
 #define sens_trigger fvars[0x7] // (L/min). Possible values: 13.2, 8.1, 4.8, 3.3, 1.8
@@ -133,11 +133,11 @@ static const   int *pap_timer = &ivars[0];
 //////////////////////////////////////
 // Functions implemented in .c file //
 
-float map(float s, float start, float end, float new_start, float new_end);
-float mapc(float s, float start, float end, float new_start, float new_end); // Clamped to new_start-new_end
-float map01(float s, float start, float end);
-float map01c(float s, float start, float end); // Version that clamps to 0-1
-float interp(float from, float to, float coeff);
+float remap(float s, float start, float end, float new_start, float new_end);
+float remapc(float s, float start, float end, float new_start, float new_end); // Clamped to new_start-new_end
+float remap01(float s, float start, float end);
+float remap01c(float s, float start, float end); // Version that clamps to 0-1
+float lerp(float from, float to, float coeff);
 float pow(float base, int exp);
 
 typedef enum {

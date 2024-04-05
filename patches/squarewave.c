@@ -1,7 +1,7 @@
 #include "stubs.h"
 
 const float RISE_TIME=0.2f;  // 1.6 * 0.4 = ~0.65s ramp
-const float PS_INTERP=0.07f; // 0.1f is ~0.25s and sharp but comfy, 0.05f feels a bit slow
+const float PS_lerp=0.07f; // 0.1f is ~0.25s and sharp but comfy, 0.05f feels a bit slow
 
 void start(int param_1) {
   float * const fvars = (void*) 0x2000e948;
@@ -29,7 +29,7 @@ void start(int param_1) {
       *cmd_ps = ips;
     }
   } else { // Exhale
-    *cmd_ps = *cmd_ps * (1.0f-PS_INTERP);
+    *cmd_ps = *cmd_ps * (1.0f-PS_lerp);
     *cmd_epap = epap;
     if (progress <= 0.600f) {
       *cmd_epap -= (progress - 0.5f) * 10.0f * eps;

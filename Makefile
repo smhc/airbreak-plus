@@ -12,26 +12,12 @@ $(BUILD)/stm32-patched.bin: patch-airsense $(BUILD)/common_code.bin $(BUILD)/gra
 $(BUILD)/stm32-asv.bin: patch-airsense $(BUILD)/common_code.bin $(BUILD)/graph.bin $(BUILD)/squarewave_asv.bin $(BUILD)/asv_task_wrapper.bin $(BUILD)/wrapper_limit_max_pdiff.bin
 	export PATCH_CODE=1 && export PATCH_S_ASV=1 && export PATCH_ASV_TASK_WRAPPER=1 && export PATCH_VAUTO_WRAPPER=1 && ./patch-airsense stm32.bin $@
 
-binaries: $(BUILD)/common_code.bin $(BUILD)/ventilator.bin $(BUILD)/graph.bin $(BUILD)/squarewave.bin $(BUILD)/squarewave_asv.bin $(BUILD)/asv_task_wrapper.bin $(BUILD)/wrapper_limit_max_pdiff.bin
+binaries: $(BUILD)/common_code.bin $(BUILD)/graph.bin $(BUILD)/squarewave.bin $(BUILD)/squarewave_asv.bin $(BUILD)/asv_task_wrapper.bin $(BUILD)/wrapper_limit_max_pdiff.bin
 
 serve:
 	mkdocs serve
 deploy:
 	mkdocs gh-deploy
-
-# The ventilator extension replaces the function at 0x80bb734 with
-# a simple on/off timer for alternating between two pressures.
-# It can't be too long or it will overlap another function.
-#
-# TODO: add a size check
-#
-# To add another extension at a different address in the firmware,
-# define a .elf target and a variable with the offset that it will
-# be patched into the image.
-
-$(BUILD)/ventilator.elf: $(BUILD)/ventilator.o $(BUILD)/stubs.o
-ventilator-offset := 0x80bb734
-ventilator-extra := --just-symbols=$(BUILD)/common_code.elf
 
 $(BUILD)/common_code.elf: $(BUILD)/common_code.o $(BUILD)/stubs.o
 common_code-offset := 0x80fe000
@@ -49,9 +35,6 @@ squarewave-extra := --just-symbols=$(BUILD)/common_code.elf
 $(BUILD)/squarewave_asv.elf: $(BUILD)/squarewave_asv.o $(BUILD)/stubs.o
 squarewave_asv-offset := 0x80fd000
 squarewave_asv-extra := --just-symbols=$(BUILD)/common_code.elf
-
-# $(BUILD)/squarewave_pav.elf: $(BUILD)/squarewave_pav.o $(BUILD)/common_code.o $(BUILD)/stubs.o
-# squarewave_pav-offset := 0x80fd000
 
 $(BUILD)/asv_task_wrapper.elf: $(BUILD)/asv_task_wrapper.o $(BUILD)/stubs.o
 asv_task_wrapper-offset := 0x80fdf00

@@ -30,10 +30,6 @@ STATIC float get_delta_flow(history_t *hist, int bin_size) {
 // +1 pointer address: 0x000f93d0. Original function address: 0x080bc992
 extern void pressure_limit_max_difference();
 
-// STATIC float reshape_ps1(float ps1, int exp, float perc) {
-//   return perc * (1.0f - pow(1.0f-ps1, exp)) + (1.0f-perc) * ps1;
-// }
-
 // Reshapes PS in 0.0-1.0 format to differently shaped slopes with `mult` times the AUC, first increasing slope before magnitude
 // Only using ^4 shape, because going to ^8 and above is very jarring and results in bad premature cycling
 STATIC float reshape_vauto_ps(float ps1, float mult) {
@@ -43,7 +39,7 @@ STATIC float reshape_vauto_ps(float ps1, float mult) {
   if (mult <= 1.0) { 
     return ps1; 
   } else if ((mult > 1.0) && (mult <= 2.0)) {
-    return map(mult, 1.0f, 2.0f, ps1, ps4 * 1.383f);
+    return remap(mult, 1.0f, 2.0f, ps1, ps4 * 1.383f);
   } else {
     return ps4 * (mult / 1.4455f);
   }
@@ -78,10 +74,10 @@ void MAIN start() {
 
     if (tr->st_inhaling) {
       float new_ps = ps;
-      new_ps = map(ps1, 0.0f, 1.0f, feat->eps, vauto_ps-INSTANT_PS) + INSTANT_PS;
+      new_ps = remap(ps1, 0.0f, 1.0f, feat->eps, vauto_ps-INSTANT_PS) + INSTANT_PS;
       if (toggle) { // Disable if Ti min is set to above 0.1s
         float new_ps1 = reshape_vauto_ps(ps1, asv->asv_factor);
-        new_ps = map(new_ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS*asv->asv_factor;
+        new_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, vauto_ps - INSTANT_PS) + INSTANT_PS*asv->asv_factor;
       }
       dps = (new_ps - ps);
 
@@ -94,16 +90,16 @@ void MAIN start() {
         current_eps = max(0.0f, current_eps - (asv->final_ips - vauto_ps) * 0.25f);
         if (tr->st_just_started) { feat->eps = -current_eps; }
         else {
-          float eps1 = map01c(tr->current.volume / tr->current.volume_max, 0.05f, 0.6f);
-          eps1 = min(eps1, map01c(tr->current.te, 1.2f, 0.4f));
+          float eps1 = remap01c(tr->current.volume / tr->current.volume_max, 0.05f, 0.6f);
+          eps1 = min(eps1, remap01c(tr->current.te, 1.2f, 0.4f));
           feat->eps = max(feat->eps, -current_eps * eps1);
         }
       }
       float new_ps1 = ps1*ps1 * 0.75f + 0.25f * ps1;
-      float new_ps = map(new_ps1, 0.0f, 1.0f, feat->eps, asv->final_ips);
+      float new_ps = remap(new_ps1, 0.0f, 1.0f, feat->eps, asv->final_ips);
       dps = (new_ps - ps);
 
-      feat->ips_fa = mapc(flow2, 1.0f, 8.0f, 0.0f, 0.4f);
+      feat->ips_fa = remapc(flow2, 1.0f, 8.0f, 0.0f, 0.4f);
       if (flow <= -2.0f) { feat->ips_fa = 0.0f; }
       dps += feat->ips_fa;
     }

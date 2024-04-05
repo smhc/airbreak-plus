@@ -1,23 +1,23 @@
 #include "common_code.h"
 #include "stubs.h"
 
-float map(float s, float start, float end, float new_start, float new_end) {
-  return new_start + map01(s, start, end) * (new_end - new_start);
+float remap(float s, float start, float end, float new_start, float new_end) {
+  return new_start + remap01(s, start, end) * (new_end - new_start);
 }
 
-float mapc(float s, float start, float end, float new_start, float new_end) {
-  return clamp( map(s, start, end, new_start, new_end), new_start, new_end);
+float remapc(float s, float start, float end, float new_start, float new_end) {
+  return clamp( remap(s, start, end, new_start, new_end), new_start, new_end);
 }
 
-float map01(float s, float start, float end) {
+float remap01(float s, float start, float end) {
    return (s - start)/(end-start);
 }
 
-float map01c(float s, float start, float end) {
-   return clamp( map01(s, start, end), 0.0f, 1.0f );
+float remap01c(float s, float start, float end) {
+   return clamp( remap01(s, start, end), 0.0f, 1.0f );
 }
 
-float interp(float from, float to, float coeff) {
+float lerp(float from, float to, float coeff) {
    return from + (to - from) * coeff;
 }
 
@@ -141,11 +141,11 @@ void update_tracking(tracking_t *tr) {
     tr->st_valid_breath = tr->last.te > max(tr->recent.te * 0.6f, 0.7f);
     tr->st_valid_breath &= tr->last.ti > 0.7f;
     if (tr->st_valid_breath) {
-      inplace(interp, &tr->recent.volume_max, tr->last.volume_max, tr_coeff);
-      inplace(interp, &tr->recent.exh_maxflow, tr->last.exh_maxflow, tr_coeff);
-      inplace(interp, &tr->recent.inh_maxflow, tr->last.inh_maxflow, tr_coeff);
-      inplace(interp, &tr->recent.ti, tr->last.ti, tr_coeff);
-      inplace(interp, &tr->recent.te, tr->last.te, tr_coeff);
+      inplace(lerp, &tr->recent.volume_max, tr->last.volume_max, tr_coeff);
+      inplace(lerp, &tr->recent.exh_maxflow, tr->last.exh_maxflow, tr_coeff);
+      inplace(lerp, &tr->recent.inh_maxflow, tr->last.inh_maxflow, tr_coeff);
+      inplace(lerp, &tr->recent.ti, tr->last.ti, tr_coeff);
+      inplace(lerp, &tr->recent.te, tr->last.te, tr_coeff);
     }
   } else if ((tr->last_progress <= 0.5f) && (breath_progress > 0.5f)) {
     tr->st_inhaling = false; tr->st_just_started = true;

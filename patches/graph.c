@@ -8,7 +8,7 @@
 #define DRAW_FLOW 0
 
 STATIC float rescale(float value, float start, float end, float graph_height) {
-	return map01(value, start, end) * graph_height;
+	return remap01(value, start, end) * graph_height;
 }
 
 

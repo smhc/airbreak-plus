@@ -6,8 +6,6 @@
 const float INSTANT_PS = 0.45f;
 const float EPS = 1.2f;
 
-const float EPS_REDUCE_PER_IPS = 0.5f; // (%) How much of extra ASV IPS to reduce EPS by?
-
 typedef struct {
   float eps; // EPS (cmH2O) - used to prevent instant jumps in pressure in case of autotriggering
   float ips_fa; // Flow-Assist IPS (cmH2O) - currently used to augment pretrigger effort
@@ -69,6 +67,8 @@ void MAIN start() {
 
   apply_jitter(true);
 
+  float current_eps = clamp((*cmd_epap-4.0f) * 0.3f - vauto_ps * 0.25f, 0.4f, 1.6f);
+
   float dps = 0.0f;
   bool toggle = (ti_min <= 150);
   if (*therapy_mode == 3) {
@@ -86,17 +86,17 @@ void MAIN start() {
       dps = (new_ps - ps);
 
       feat->ips_fa = 0.0f;
-      feat->eps = min(feat->eps + 0.01f * EPS, 0.0f);
+      feat->eps = min(feat->eps + 0.01f * current_eps, 0.0f);
 
       asv->final_ips = max(asv->final_ips, ps + dps);
     } else { // Exhaling
       if (tr->current.ti >= 0.7f) {
-        const float eps = max(0.0f, EPS - (asv->final_ips - vauto_ps) * EPS_REDUCE_PER_IPS);
-        if (tr->st_just_started) { feat->eps = -eps; }
+        current_eps = max(0.0f, current_eps - (asv->final_ips - vauto_ps) * 0.25f);
+        if (tr->st_just_started) { feat->eps = -current_eps; }
         else {
           float eps1 = map01c(tr->current.volume / tr->current.volume_max, 0.05f, 0.6f);
           eps1 = min(eps1, map01c(tr->current.te, 1.2f, 0.4f));
-          feat->eps = max(feat->eps, -eps * eps1);
+          feat->eps = max(feat->eps, -current_eps * eps1);
         }
       }
       float new_ps1 = ps1*ps1 * 0.75f + 0.25f * ps1;

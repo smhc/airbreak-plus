@@ -6,6 +6,8 @@ IN=$1
 OUT=$2
 
 DEBUG_PATCH=""
+firmware_rev=""
+model=""
 
 if [ -z "$IN" -o -z "$OUT" ]; then
 	die "Usage: $0: stm32.bin stm32-unlocked.bin"
@@ -28,10 +30,23 @@ check_hash() {
 	HASH=$(sha256sum $IN | awk '{print $1}')
 	if [[ $HASH == "6790b548e0b37c57bc118772d4a04a599c0b74b16cd92e821071b9c7ba5ab711" ]] ; then
 		echo "$IN: VAuto 37051-SX567-0401 binary identified"
+		firmware_rev="401"
+                model="VAuto"
 	elif [[ $HASH == "533b91127aa22e05b933db203ad56c449dc12a8c3fd62f57bd88c472a8061775" ]] ; then
 		echo "$IN: AutoSet 37028-SX567-0401 binary identified"
-	else 
-	    die "$IN: Unidentified binary. Confirm its version is 0401 and that its binary has the same section layout"
+		firmware_rev="401"
+                model="Autoset"
+	elif [[ $HASH == "14b5a63f9fc3bb03a1e023c67492e969f7cba007907bbe69719e0114f11fbb9f" ]] ; then
+		echo "$IN: ASV 37043-SX567-0305 binary identified"
+		firmware_rev="305"
+                model="ASV"
+                PATCH_CODE=0
+	elif [[ $HASH == "9953f60b8bd8482614b946b5850976759ef834262315f9d40cc063ce8ef10070" ]] ; then
+		echo "$IN: ASV 37113-SX567-0401 binary identified"
+		firmware_rev="401"
+                model="ASV"
+	else
+		die "$IN: Unidentified binary. Confirm its version is 0401 and that its binary has the same section layout"
 	fi
 }
 
@@ -44,9 +59,13 @@ patch_tamper() {
 }
 
 patch_strings() {
-	# and add a message so that we know this is a modified firmware
+	# and add a message so that we know this is a modified firmware_rev
 	printf 'HACKED!' | patch 0x17500 || die failed
-	printf 'My Options OwO\x00' | patch 0x17588 # Overwrites the French string, which will be broken. No biggie :P
+	if [[ $model == "ASV" && $firmware_rev == "401" ]] ; then
+	    printf 'My Options OwO\x00' | patch 0x175b0 # Overwrites the French string, which will be broken. No biggie :P
+	else
+	    printf 'My Options OwO\x00' | patch 0x17588
+	fi
 }
 
 BUILD_FLAGS=0
@@ -152,9 +171,15 @@ asv_unlock_ps_range () {
     # Disable the ASV and ASVAuto PS range check to allow Max PS < (Min PS + 5)
     #
     # Update PS validation logic without disabling other checks.
-    printf '\x00' | patch 0x76c08
-    printf '\x00' | patch 0x76c34
-    printf '\x00' | patch 0x76cca
+    if [[ $firmware_rev == "305" ]] ; then
+	printf '\x00' | patch 0x76c0c
+	printf '\x00' | patch 0x76c38
+	printf '\x00' | patch 0x76cce
+    else
+	printf '\x00' | patch 0x76c08
+	printf '\x00' | patch 0x76c34
+	printf '\x00' | patch 0x76cca
+    fi
 
     # Update variable config to allow Max PS to be set below 5
     printf '\x00' | patch 0x8074
@@ -294,22 +319,25 @@ check_hash
 patch_tamper
 patch_strings
 
-if [[ $PATCH_BACKUP_RATE == 1 ]] ; then
-	asv_disable_backup_rate
-fi
-patch_code # Handled based on environmental variables, no need to comment out
-
 # gui_config_all
 unlock_ui_limits # 2
+asv_unlock_ps_range
+
 extra_debug # 4
 extra_modes # 8
 extra_menu # 16
 # all_menu # 32
 gui_config # 64
 
-asv_unlock_ps_range
+if [[ $firmware_rev == "401" ]] ; then
+    # TODO: Fix offsets for 305 firmware
 
-custom_palette #128
+    if [[ $PATCH_BACKUP_RATE == 1 ]] ; then
+	    asv_disable_backup_rate
+    fi
+    patch_code # Handled based on environmental variables, no need to comment out
+    custom_palette #128
+fi
 
 # echo "Built with FLAGS=$BUILD_FLAGS"
 #FLAGSTR=$(printf 'FLAGS=0x%02x' $BUILD_FLAGS)
